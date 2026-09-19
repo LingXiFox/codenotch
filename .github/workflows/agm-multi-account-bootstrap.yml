@@ -1,0 +1,203 @@
+name: AGM multi-account bootstrap
+
+on:
+  push:
+    branches:
+      - feature/antigravity-multi-account
+
+permissions:
+  contents: write
+
+jobs:
+  patch-test-build:
+    if: ${{ !contains(github.event.head_commit.message, '[agm-bootstrap]') }}
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Apply multi-account integration patch
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          def replace(path, old, new):
+              p = Path(path)
+              s = p.read_text()
+              if old not in s:
+                  raise SystemExit(f"pattern not found in {path}")
+              p.write_text(s.replace(old, new, 1))
+
+          replace(
+              "Sources/App/AppDelegate.swift",
+              """    private let claudeProfiles = ClaudeProfile.discover()
+              private let codexProfiles = CodexProfile.discover()
+          """,
+              """    private let claudeProfiles = ClaudeProfile.discover()
+              private let codexProfiles = CodexProfile.discover()
+              /// AGM is optional. When present, each account becomes an independent
+              /// Antigravity provider; tests never spawn external account tooling.
+              private let agmProfiles = Runtime.isUnderTest ? [] : AGMProfile.discover()
+          """)
+
+          replace(
+              "Sources/App/AppDelegate.swift",
+              """            self.claudeProviders = claudeProviders
+              let allProviders: [UsageProvider] = claudeProviders
+                  + [CursorLocalProvider()]
+                  + codexProfiles.map { CodexLocalProvider(profile: $0) }
+                  + [AntigravityProvider(),
+                     GLMProvider(), MiniMaxProvider(web: miniMaxWeb), GrokLocalProvider(), DevinLocalProvider(), OpenCodeProvider(),
+          """,
+              """            self.claudeProviders = claudeProviders
+              let antigravityProviders: [UsageProvider] = agmProfiles.isEmpty
+                  ? [AntigravityProvider()]
+                  : agmProfiles.map { AGMAntigravityProvider(profile: $0) }
+              let allProviders: [UsageProvider] = claudeProviders
+                  + [CursorLocalProvider()]
+                  + codexProfiles.map { CodexLocalProvider(profile: $0) }
+                  + antigravityProviders
+                  + [GLMProvider(), MiniMaxProvider(web: miniMaxWeb), GrokLocalProvider(), DevinLocalProvider(), OpenCodeProvider(),
+          """)
+
+          replace(
+              "Sources/App/AppDelegate.swift",
+              """        var monitors: [String: any AgentActivityMonitor] = [
+              "cursor": CursorActivityMonitor(),
+              "gemini": AntigravityActivityMonitor(),
+              "grok": GrokActivityMonitor(),
+              "gemini-api": GeminiAPIActivityMonitor(),
+              "kimi": KimiActivityMonitor(),
+          ]
+          """,
+              """        var monitors: [String: any AgentActivityMonitor] = [
+              "cursor": CursorActivityMonitor(),
+              "grok": GrokActivityMonitor(),
+              "gemini-api": GeminiAPIActivityMonitor(),
+              "kimi": KimiActivityMonitor(),
+          ]
+          let antigravityActivityID = agmProfiles.first(where: { $0.isAgyActive })?.id
+              ?? agmProfiles.first(where: { $0.isIDEActive })?.id
+              ?? agmProfiles.first?.id
+              ?? "gemini"
+          monitors[antigravityActivityID] = AntigravityActivityMonitor()
+          """)
+
+          replace(
+              "Sources/Settings/Preferences.swift",
+              """        if defaults.object(forKey: Keys.connected) != nil {
+              connectedProviders.subtract(connectedProviders.filter(Self.isModelCell))
+              seenProviders.subtract(seenProviders.filter(Self.isModelCell))
+              let novel = discovered.subtracting(seenProviders)
+          """,
+              """        if defaults.object(forKey: Keys.connected) != nil {
+              connectedProviders.subtract(connectedProviders.filter(Self.isModelCell))
+              seenProviders.subtract(seenProviders.filter(Self.isModelCell))
+              if connectedProviders.contains("gemini") {
+                  connectedProviders.formUnion(discovered.filter(AGMProfile.isAGM(providerID:)))
+              }
+              let novel = discovered.subtracting(seenProviders)
+          """)
+
+          replace(
+              "Sources/Model/UsageStore.swift",
+              """            if let ag = provider as? AntigravityProvider {
+                  snapshot.headlineID = ag.resolveHeadlineID(for: snapshot.windows)
+                  snapshot.weeklyID = ag.resolveWeeklyID(for: snapshot.windows)
+                  snapshots[idx] = snapshot
+                  updateNotchSnapshots()
+              }
+          """,
+              """            if let ag = provider as? AntigravityProvider {
+                  snapshot.headlineID = ag.resolveHeadlineID(for: snapshot.windows)
+                  snapshot.weeklyID = ag.resolveWeeklyID(for: snapshot.windows)
+                  snapshots[idx] = snapshot
+                  updateNotchSnapshots()
+              } else if let agm = provider as? AGMAntigravityProvider {
+                  snapshot.headlineID = agm.resolveHeadlineID(for: snapshot.windows)
+                  snapshot.weeklyID = agm.resolveWeeklyID(for: snapshot.windows)
+                  snapshots[idx] = snapshot
+                  updateNotchSnapshots()
+              }
+          """)
+
+          replace(
+              "Sources/Settings/SettingsView.swift",
+              'if isConnected, provider.id == "gemini" {',
+              'if isConnected, provider.id == "gemini" || AGMProfile.isAGM(providerID: provider.id) {'
+          )
+
+          for path in [".github/workflows/ci.yml", ".github/workflows/package.yml"]:
+              p = Path(path)
+              s = p.read_text()
+              old = "if: github.repository == 'vinzdg/codenotch'"
+              new = "if: github.repository == 'vinzdg/codenotch' || github.repository == 'LingXiFox/codenotch'"
+              if old not in s:
+                  raise SystemExit(f"workflow guard not found in {path}")
+              p.write_text(s.replace(old, new, 1))
+          PY
+
+      - name: Commit integration patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Sources .github/workflows/ci.yml .github/workflows/package.yml
+          git commit -m "Wire AGM multi-account runtime [agm-bootstrap]"
+          git push origin HEAD:feature/antigravity-multi-account
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Test and build app
+        id: build
+        continue-on-error: true
+        run: |
+          set +e
+          xcodebuild -version > agm-bootstrap.log 2>&1
+          xcrun --show-sdk-version >> agm-bootstrap.log 2>&1
+          make test-ci >> agm-bootstrap.log 2>&1
+          TEST_STATUS=$?
+          make build-ci >> agm-bootstrap.log 2>&1
+          BUILD_STATUS=$?
+          STATUS=$(( TEST_STATUS || BUILD_STATUS ))
+          echo "TEST_STATUS=$TEST_STATUS" >> agm-bootstrap.log
+          echo "BUILD_STATUS=$BUILD_STATUS" >> agm-bootstrap.log
+          echo "status=$STATUS" >> "$GITHUB_OUTPUT"
+
+      - name: Package app bundle
+        if: steps.build.outputs.status == '0'
+        run: |
+          APP=$(find build/ci/DerivedData/Build/Products/Release -maxdepth 1 -name 'Codenotch.app' -print -quit)
+          test -n "$APP"
+          ditto -c -k --sequesterRsrc --keepParent "$APP" build/ci/Codenotch.app.zip
+          make dmg-ci
+
+      - name: Record bootstrap result
+        if: always()
+        run: |
+          STATUS="FAIL"
+          if [ "${{ steps.build.outputs.status }}" = "0" ]; then STATUS="PASS"; fi
+          {
+            echo "# AGM multi-account bootstrap: $STATUS"
+            echo
+            echo "Source commit: ${GITHUB_SHA}"
+            echo
+            tail -n 120 agm-bootstrap.log 2>/dev/null || true
+          } > AGM_BOOTSTRAP_STATUS.md
+          git add AGM_BOOTSTRAP_STATUS.md
+          git commit -m "Record AGM bootstrap $STATUS [agm-bootstrap]" || true
+          git push origin HEAD:feature/antigravity-multi-account
+
+      - uses: actions/upload-artifact@v7
+        if: steps.build.outputs.status == '0'
+        with:
+          name: Codenotch-AGM-multi-account-${{ github.sha }}
+          path: |
+            build/ci/Codenotch.app.zip
+            build/ci/*.dmg
+          if-no-files-found: error
+
+      - name: Fail workflow when validation failed
+        if: steps.build.outputs.status != '0'
+        run: exit 1
