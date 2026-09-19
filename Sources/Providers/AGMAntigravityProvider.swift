@@ -307,11 +307,6 @@ enum AGMBridge {
     }
 }
 
-private extension Array {
-    subscript(safe index: Int) -> Element? {
-        indices.contains(index) ? self[index] : nil
-    }
-}
 
 actor AGMRefreshCoordinator {
     struct Outcome: Sendable {
