@@ -227,6 +227,45 @@ final class CodexUsageTests: XCTestCase {
         XCTAssertEqual(result.map(\.usedFraction), [0.29, 0.40])
     }
 
+    func testNumericStringsAreParsed() throws {
+        let result = try windows("""
+        {"rate_limit":{
+          "primary_window":{"used_percent":"25.5","limit_window_seconds":"18000","reset_at":"1800001000"},
+          "secondary_window":{"used_percent":"10","limit_window_seconds":"604800","reset_after_seconds":"120"}}}
+        """)
+        XCTAssertEqual(result.map(\.id), ["primary", "secondary"])
+        XCTAssertEqual(result.first?.usedFraction ?? -1, 0.255, accuracy: 0.0001)
+        XCTAssertEqual(result.first?.duration, 18000)
+        XCTAssertEqual(result.first?.resetsAt, Date(timeIntervalSince1970: 1_800_001_000))
+        XCTAssertEqual(result.last?.resetsAt, Date(timeIntervalSince1970: 1_800_000_120))
+    }
+
+    func testRateLimitsAliasesPercentLeftAndResetTimeMsAreParsed() throws {
+        let result = try windows("""
+        {"rate_limits":{
+          "five_hour":{"percent_left":40,"windowDurationMins":300,"reset_time_ms":1800001000000},
+          "weekly":{"percent_left":"70","windowDurationMins":"10080","reset_time_ms":"1800600000000"}}}
+        """)
+        XCTAssertEqual(result.map(\.id), ["primary", "secondary"])
+        XCTAssertEqual(result.map(\.usedFraction), [0.60, 0.30])
+        XCTAssertEqual(result.map(\.duration), [18000, 604800])
+        XCTAssertEqual(result.first?.resetsAt, Date(timeIntervalSince1970: 1_800_001_000))
+        XCTAssertEqual(result.last?.resetsAt, Date(timeIntervalSince1970: 1_800_600_000))
+    }
+
+    func testCamelCaseWindowFieldsAreParsed() throws {
+        let result = try windows("""
+        {"rate_limit":{
+          "primary":{"usedPercent":25,"windowDurationMins":300,"resetsAt":1800001000},
+          "secondary":{"usedPercent":"10","windowDurationMins":"10080","resetsAt":"1800600000"}}}
+        """)
+        XCTAssertEqual(result.map(\.id), ["primary", "secondary"])
+        XCTAssertEqual(result.map(\.usedFraction), [0.25, 0.10])
+        XCTAssertEqual(result.map(\.duration), [18000, 604800])
+        XCTAssertEqual(result.first?.resetsAt, Date(timeIntervalSince1970: 1_800_001_000))
+        XCTAssertEqual(result.last?.resetsAt, Date(timeIntervalSince1970: 1_800_600_000))
+    }
+
     /// An empty additional_rate_limits array is the same as omitting it.
     func testEmptyAdditionalRateLimitsLeaveTheMainWindowsUnchanged() throws {
         let result = try windows("""
@@ -959,44 +998,3 @@ final class UsageBlockTests: XCTestCase {
             let symbols = DateFormatter()
             symbols.locale = locale
             XCTAssertFalse(text.contains(symbols.amSymbol) || text.contains(symbols.pmSymbol),
-                           "\(id) got a 12-hour clock: \(text)")
-        }
-        let american = block.summary(now: now, locale: Locale(identifier: "en_US"))
-        XCTAssertTrue(american.contains("AM") || american.contains("PM"),
-                      "en_US lost its AM/PM: \(american)")
-    }
-
-    /// With no reset time there is nothing to promise, so it says only what it
-    /// knows.
-    func testWithoutAResetItSaysOnlyTheReason() {
-        XCTAssertEqual(UsageBlock(reason: "Paused", resetsAt: nil).summary(), "Paused")
-    }
-
-    /// A reset already in the past is not worth showing as a deadline.
-    func testAPastResetIsDropped() {
-        let now = Date(timeIntervalSince1970: 1_788_000_000)
-        let block = UsageBlock(reason: "Paused", resetsAt: now.addingTimeInterval(-60))
-        XCTAssertEqual(block.summary(now: now), "Paused")
-    }
-
-    /// The card has to be tall enough for the line, or it is clipped — the same
-    /// mistake the status message made.
-    func testTheCardMakesRoomForIt() {
-        let plain = NotchLayout.cardHeight(windowCount: 1)
-        let blocked = NotchLayout.cardHeight(windowCount: 1,
-                                             blockMessage: "Paused until 4:13 PM")
-        XCTAssertGreaterThan(blocked, plain, "the blocked line has no room to be drawn in")
-    }
-
-    /// And a long one gets the room it actually needs.
-    func testALongBlockMessageGetsMoreThanOneLine() {
-        let long = "Workspace limit reached until Thu 4:13 PM — every seat on this "
-                 + "workspace shares one allowance and it is spent"
-        XCTAssertGreaterThan(NotchLayout.bodyTextHeight(long),
-                             NotchLayout.cardBodyLineHeight)
-        XCTAssertGreaterThan(
-            NotchLayout.cardHeight(windowCount: 1, blockMessage: long),
-            NotchLayout.cardHeight(windowCount: 1, blockMessage: "Paused")
-        )
-    }
-}

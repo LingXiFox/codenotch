@@ -25,6 +25,26 @@ enum AGMBridge {
         let resetTime: String?
     }
 
+    struct ListSummary: Equatable, Sendable {
+        let gemProRemaining: Int?
+        let gemFlashRemaining: Int?
+        let claudeRemaining: Int?
+
+        func remaining(for family: QuotaFamily) -> Int? {
+            switch family {
+            case .gemPro: return gemProRemaining
+            case .gemFlash: return gemFlashRemaining
+            case .claude: return claudeRemaining
+            }
+        }
+    }
+
+    enum QuotaFamily: CaseIterable, Sendable {
+        case gemPro
+        case gemFlash
+        case claude
+    }
+
     static func findExecutable(fileManager: FileManager = .default) -> URL? {
         let env = ProcessInfo.processInfo.environment
         var candidates: [String] = []
@@ -54,7 +74,7 @@ enum AGMBridge {
                             arguments: ["-lic", "command -v agm 2>/dev/null"],
                             timeout: 2)
         let path = probe.stdout
-            .split(whereSeparator: .isNewline)
+            .split(whereSeparator: \.isNewline)
             .map(String.init)
             .last?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -105,30 +125,21 @@ enum AGMBridge {
 
     static func parseProfiles(list: String, aliases: String) -> [AGMProfile] {
         var aliasForEmail: [String: String] = [:]
-        for raw in aliases.split(whereSeparator: .isNewline) {
-            let fields = raw.split(whereSeparator: .isWhitespace).map(String.init)
+        for raw in aliases.split(whereSeparator: \.isNewline) {
+            let fields = raw.split(whereSeparator: \.isWhitespace).map(String.init)
             guard fields.count >= 2, fields[0] != "ALIAS", fields[1].contains("@") else { continue }
             aliasForEmail[fields[1].lowercased()] = fields[0]
         }
 
         var profiles: [AGMProfile] = []
-        for raw in list.split(whereSeparator: .isNewline) {
+        for raw in list.split(whereSeparator: \.isNewline) {
             let line = String(raw)
-            let fields = line.split(whereSeparator: .isWhitespace).map(String.init)
-            guard let email = fields.first, email.contains("@"),
-                  let emailRange = line.range(of: email) else { continue }
-
-            let tail = String(line[emailRange.upperBound...])
-            let status = tail.split(whereSeparator: .isWhitespace)
-                .map(String.init)
-                .prefix { value in
-                    value != "-" && !value.hasSuffix("%")
-                }
-                .joined(separator: ",")
+            guard let row = parseListRow(line) else { continue }
+            let status = row.status
 
             profiles.append(AGMProfile(
-                email: email,
-                alias: aliasForEmail[email.lowercased()],
+                email: row.email,
+                alias: aliasForEmail[row.email.lowercased()],
                 isAgyActive: status.contains("cli"),
                 isIDEActive: status.contains("ide")
             ))
@@ -144,24 +155,44 @@ enum AGMBridge {
             }
     }
 
+    static func parseListSummaries(_ output: String) -> [String: ListSummary] {
+        var summaries: [String: ListSummary] = [:]
+        for raw in output.split(whereSeparator: \.isNewline) {
+            let line = String(raw)
+            guard let row = parseListRow(line) else { continue }
+            summaries[row.email.lowercased()] = row.summary
+        }
+        return summaries
+    }
+
     static func parseQuotaInfo(_ output: String) -> [QuotaRow] {
+        let pattern = #"^\s*(GOOGLE|ANTHROPIC|OTHER)\s+(.+?)\s+(\d{1,3})%(?:\s+(\S.*?))?\s*$"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
+
         var rows: [QuotaRow] = []
-        for raw in output.split(whereSeparator: .isNewline) {
-            let fields = raw.split(whereSeparator: .isWhitespace).map(String.init)
-            guard fields.count >= 3,
-                  ["GOOGLE", "ANTHROPIC", "OTHER"].contains(fields[0]),
-                  let scoreIndex = fields.firstIndex(where: { $0.hasSuffix("%") }),
-                  scoreIndex >= 2,
-                  let score = Int(fields[scoreIndex].dropLast())
+        for raw in output.split(whereSeparator: \.isNewline) {
+            let line = String(raw)
+            let range = NSRange(line.startIndex..<line.endIndex, in: line)
+            guard let match = regex.firstMatch(in: line, range: range),
+                  match.numberOfRanges == 5,
+                  let providerRange = Range(match.range(at: 1), in: line),
+                  let modelRange = Range(match.range(at: 2), in: line),
+                  let scoreRange = Range(match.range(at: 3), in: line),
+                  let score = Int(line[scoreRange])
             else { continue }
 
-            let model = fields[1..<scoreIndex].joined(separator: " ")
-            let reset = scoreIndex + 1 < fields.count
-                ? fields[(scoreIndex + 1)...].joined(separator: " ")
-                : nil
+            let reset: String?
+            if match.range(at: 4).location != NSNotFound,
+               let resetRange = Range(match.range(at: 4), in: line) {
+                let value = String(line[resetRange]).trimmingCharacters(in: .whitespaces)
+                reset = value.isEmpty ? nil : value
+            } else {
+                reset = nil
+            }
+
             rows.append(QuotaRow(
-                provider: fields[0],
-                model: model,
+                provider: String(line[providerRange]),
+                model: String(line[modelRange]).trimmingCharacters(in: .whitespaces),
                 remainingPercent: min(max(score, 0), 100),
                 resetTime: reset
             ))
@@ -169,24 +200,191 @@ enum AGMBridge {
         return rows
     }
 
+    static func reconcileQuotaRows(_ rows: [QuotaRow], with summary: ListSummary?) -> [QuotaRow] {
+        guard let summary else { return rows }
+        var merged = rows
+        for family in QuotaFamily.allCases {
+            guard let remaining = summary.remaining(for: family) else { continue }
+            let minimumDetailed = rows
+                .filter { quotaFamily(for: $0) == family }
+                .map(\.remainingPercent)
+                .min()
+            if let minimumDetailed, minimumDetailed <= remaining { continue }
+            merged.append(QuotaRow(
+                provider: syntheticProvider(for: family),
+                model: syntheticLabel(for: family),
+                remainingPercent: remaining,
+                resetTime: nil
+            ))
+        }
+        return merged
+    }
+
     static func info(executable: URL, profile: AGMProfile) async -> CommandResult {
         await run(executable: executable, arguments: ["info", profile.email], timeout: 5)
     }
 
-    /// AGM owns one encrypted account database. Serialise refresh commands so
-    /// four visible Antigravity rings cannot make four writers hit it at once.
-    private static let refreshQueue = DispatchQueue(label: "dev.codenotch.agm-refresh")
+    static func list(executable: URL) async -> CommandResult {
+        await run(executable: executable, arguments: ["list"], timeout: 5)
+    }
 
-    static func refresh(executable: URL, profile: AGMProfile) async -> CommandResult {
-        await withCheckedContinuation { continuation in
-            refreshQueue.async {
-                continuation.resume(returning: runSync(
-                    executable: executable,
-                    arguments: ["refresh", profile.email],
-                    timeout: 30
-                ))
-            }
+    static func refreshAll(executable: URL, timeout: TimeInterval = 45) async -> CommandResult {
+        await run(executable: executable, arguments: ["refresh-all"], timeout: timeout)
+    }
+
+    static func refreshHadPartialFailure(_ result: CommandResult) -> Bool {
+        let text = "\(result.stdout)\n\(result.stderr)"
+        let pattern = #"Completed:\s*\d+\s+successful,\s*(\d+)\s+failed"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return false }
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        guard let match = regex.firstMatch(in: text, range: range),
+              match.numberOfRanges >= 2,
+              let failedRange = Range(match.range(at: 1), in: text),
+              let failed = Int(text[failedRange]) else {
+            return false
         }
+        return failed > 0
+    }
+
+    private struct ParsedListRow {
+        let email: String
+        let status: String
+        let summary: ListSummary
+    }
+
+    private static func parseListRow(_ line: String) -> ParsedListRow? {
+        let fields = line.split(whereSeparator: \.isWhitespace).map(String.init)
+        guard let email = fields.first, email.contains("@") else { return nil }
+
+        let summaryColumnCount = min(3, max(fields.count - 1, 0))
+        let tail = Array(fields.suffix(summaryColumnCount))
+        let summary = ListSummary(
+            gemProRemaining: parsePercent(tail[safe: 0]),
+            gemFlashRemaining: parsePercent(tail[safe: 1]),
+            claudeRemaining: parsePercent(tail[safe: 2])
+        )
+        let status = fields.dropFirst().dropLast(summaryColumnCount)
+            .filter { $0 != "-" }
+            .joined(separator: ",")
+            .lowercased()
+        return ParsedListRow(email: email, status: status, summary: summary)
+    }
+
+    private static func parsePercent(_ value: String?) -> Int? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed != "-" else { return nil }
+        let raw = trimmed.hasSuffix("%") ? String(trimmed.dropLast()) : trimmed
+        guard let percent = Int(raw) else { return nil }
+        return min(max(percent, 0), 100)
+    }
+
+    private static func quotaFamily(for row: QuotaRow) -> QuotaFamily? {
+        switch row.provider {
+        case "GOOGLE":
+            if row.model.localizedCaseInsensitiveContains("flash") { return .gemFlash }
+            return .gemPro
+        case "ANTHROPIC":
+            return .claude
+        default:
+            return row.model.localizedCaseInsensitiveContains("claude") ? .claude : nil
+        }
+    }
+
+    private static func syntheticProvider(for family: QuotaFamily) -> String {
+        switch family {
+        case .gemPro, .gemFlash: return "GOOGLE"
+        case .claude: return "ANTHROPIC"
+        }
+    }
+
+    private static func syntheticLabel(for family: QuotaFamily) -> String {
+        switch family {
+        case .gemPro: return "GEM-PRO (summary)"
+        case .gemFlash: return "GEM-FLASH (summary)"
+        case .claude: return "CLAUDE (summary)"
+        }
+    }
+}
+
+private extension Array {
+    subscript(safe index: Int) -> Element? {
+        indices.contains(index) ? self[index] : nil
+    }
+}
+
+actor AGMRefreshCoordinator {
+    struct Outcome: Sendable {
+        let attempted: Bool
+        let successfulAt: Date?
+        let fullySuccessful: Bool
+        let message: String?
+    }
+
+    private struct State {
+        var lastAttempt: Date?
+        var lastSuccessful: Date?
+        var lastOutcome: Outcome?
+        var inFlight: Task<Outcome, Never>?
+    }
+
+    private var states: [String: State] = [:]
+
+    func refreshIfNeeded(executable: URL, ttl: TimeInterval, now: Date) async -> Outcome {
+        let key = executable.path
+        var state = states[key] ?? State()
+        if let inFlight = state.inFlight {
+            return await inFlight.value
+        }
+        let due = state.lastAttempt.map { now.timeIntervalSince($0) >= ttl } ?? true
+        if !due {
+            return state.lastOutcome ?? Outcome(
+                attempted: false,
+                successfulAt: state.lastSuccessful,
+                fullySuccessful: true,
+                message: nil
+            )
+        }
+
+        state.lastAttempt = now
+        let task = Task { [executable] in
+            let result = await AGMBridge.refreshAll(executable: executable, timeout: 45)
+            let partialFailure = AGMBridge.refreshHadPartialFailure(result)
+            let successful = result.exitCode == 0 && !partialFailure
+            let message: String?
+            if successful {
+                message = nil
+            } else if partialFailure {
+                message = "AGM refresh-all partially failed"
+            } else {
+                message = result.combinedError
+            }
+            return Outcome(
+                attempted: true,
+                successfulAt: successful ? now : nil,
+                fullySuccessful: successful,
+                message: message
+            )
+        }
+        state.inFlight = task
+        states[key] = state
+
+        var outcome = await task.value
+        state = states[key] ?? State()
+        state.inFlight = nil
+        if outcome.fullySuccessful {
+            state.lastSuccessful = outcome.successfulAt ?? state.lastSuccessful ?? now
+        } else {
+            outcome = Outcome(
+                attempted: true,
+                successfulAt: state.lastSuccessful,
+                fullySuccessful: false,
+                message: outcome.message
+            )
+        }
+        state.lastOutcome = outcome
+        states[key] = state
+        return outcome
     }
 }
 
@@ -198,9 +396,9 @@ actor AGMAntigravityProvider: UsageProvider {
 
     private let executable: URL
     private let liveTTL: TimeInterval
-    private var lastRefreshAttempt: Date?
     private var lastSuccessfulRefresh: Date?
     private var cachedWindows: [LimitWindow] = []
+    private static let refreshCoordinator = AGMRefreshCoordinator()
 
     init(profile: AGMProfile,
          executable: URL? = AGMBridge.findExecutable(),
@@ -230,29 +428,28 @@ actor AGMAntigravityProvider: UsageProvider {
 
     func fetchSnapshot() async throws -> ProviderSnapshot {
         let now = Date()
-        let due = lastRefreshAttempt.map { now.timeIntervalSince($0) >= liveTTL } ?? true
-        var refreshed = false
-        var refreshFailure: String?
-
-        if due {
-            lastRefreshAttempt = now
-            let result = await AGMBridge.refresh(executable: executable, profile: profile)
-            if result.exitCode == 0 {
-                lastSuccessfulRefresh = now
-                refreshed = true
-            } else {
-                refreshFailure = result.combinedError
-                Log.usage.error("\(self.id, privacy: .public) AGM refresh failed: \(result.combinedError, privacy: .public)")
-            }
+        let refresh = await Self.refreshCoordinator.refreshIfNeeded(
+            executable: executable,
+            ttl: liveTTL,
+            now: now
+        )
+        if let refreshedAt = refresh.successfulAt {
+            lastSuccessfulRefresh = refreshedAt
+        }
+        if refresh.attempted, !refresh.fullySuccessful, let message = refresh.message {
+            Log.usage.error("\(self.id, privacy: .public) AGM refresh-all failed: \(message, privacy: .public)")
         }
 
         let info = await AGMBridge.info(executable: executable, profile: profile)
+        let list = await AGMBridge.list(executable: executable)
+        let summaries = list.exitCode == 0 ? AGMBridge.parseListSummaries(list.stdout) : [:]
+        let summary = summaries[profile.email.lowercased()]
         if info.exitCode == 0 {
-            let rows = AGMBridge.parseQuotaInfo(info.stdout)
+            let rows = AGMBridge.reconcileQuotaRows(AGMBridge.parseQuotaInfo(info.stdout), with: summary)
             let windows = Self.windows(from: rows, now: now)
             if !windows.isEmpty {
                 cachedWindows = windows
-                let status: ProviderStatus = due && !refreshed
+                let status: ProviderStatus = refresh.attempted && !refresh.fullySuccessful
                     ? .stale(since: lastSuccessfulRefresh ?? now)
                     : .ok
                 return snapshot(windows: windows, status: status)
@@ -264,7 +461,7 @@ actor AGMAntigravityProvider: UsageProvider {
                             status: .stale(since: lastSuccessfulRefresh ?? now))
         }
 
-        let message = refreshFailure ?? info.combinedError
+        let message = refresh.message ?? info.combinedError
         if message.lowercased().contains("not found") || message.lowercased().contains("no accounts") {
             throw UsageProviderError.needsAuth
         }
@@ -287,15 +484,16 @@ actor AGMAntigravityProvider: UsageProvider {
     nonisolated static func windows(from rows: [AGMBridge.QuotaRow], now: Date) -> [LimitWindow] {
         rows.map { row in
             let reset = row.resetTime.flatMap(AntigravityCredentials.parse)
-            let interval = reset?.timeIntervalSince(now)
-            let weekly = interval.map { $0 > 24 * 3600 } ?? false
+            let interval = reset.map { $0.timeIntervalSince(now) }
+            let weekly = (interval ?? 0) > 24 * 3600
             let group = row.provider == "GOOGLE"
                 ? L10n.t("Gemini Models")
                 : L10n.t("Claude and GPT models")
             let prefix = row.provider == "GOOGLE" ? "gemini" : "3p"
             let model = slug(row.model)
+            let cadence = reset == nil ? "unknown" : (weekly ? "weekly" : "hourly")
             return LimitWindow(
-                id: "\(prefix)-\(model)-\(weekly ? "weekly" : "hourly")",
+                id: "\(prefix)-\(model)-\(cadence)",
                 group: group,
                 label: row.model,
                 usedFraction: 1 - Double(row.remainingPercent) / 100,
