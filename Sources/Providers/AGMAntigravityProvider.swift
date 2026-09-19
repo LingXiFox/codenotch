@@ -391,18 +391,21 @@ actor AGMAntigravityProvider: UsageProvider {
 
     private let executable: URL
     private let liveTTL: TimeInterval
+    private let session: URLSession
     private var lastSuccessfulRefresh: Date?
     private var cachedWindows: [LimitWindow] = []
     private static let refreshCoordinator = AGMRefreshCoordinator()
 
     init(profile: AGMProfile,
          executable: URL? = AGMBridge.findExecutable(),
-         liveTTL: TimeInterval = 5 * 60) {
+         liveTTL: TimeInterval = 5 * 60,
+         session: URLSession = .shared) {
         self.profile = profile
         self.id = profile.id
         self.displayName = profile.displayName
         self.executable = executable ?? URL(fileURLWithPath: "/usr/bin/false")
         self.liveTTL = liveTTL
+        self.session = session
     }
 
     nonisolated var signInRoute: SignInRoute {
@@ -435,6 +438,26 @@ actor AGMAntigravityProvider: UsageProvider {
             Log.usage.error("\(self.id, privacy: .public) AGM refresh-all failed: \(message, privacy: .public)")
         }
 
+        // AGM's fetchAvailableModels snapshot can report stale 100%-remaining
+        // values. Borrow the exact account's refreshed token and query the daily
+        // quota endpoint Antigravity itself uses before the CLI cache fallback.
+        if let credential = try? AGMCredentialStore.load(email: profile.email) {
+            do {
+                let windows = try await Self.liveQuota(
+                    session: session, credential: credential, now: now
+                )
+                if !windows.isEmpty {
+                    cachedWindows = windows
+                    Log.usage.debug("\(self.id, privacy: .public) quota source -> daily-cloudcode")
+                    return snapshot(windows: windows, status: .ok)
+                }
+            } catch {
+                Log.usage.error("\(self.id, privacy: .public) daily quota failed: \(String(describing: error), privacy: .public)")
+            }
+        } else {
+            Log.usage.error("\(self.id, privacy: .public) could not read AGM credential; using cached quota fallback")
+        }
+
         let info = await AGMBridge.info(executable: executable, profile: profile)
         let list = await AGMBridge.list(executable: executable)
         let summaries = list.exitCode == 0 ? AGMBridge.parseListSummaries(list.stdout) : [:]
@@ -444,10 +467,8 @@ actor AGMAntigravityProvider: UsageProvider {
             let windows = Self.windows(from: rows, now: now)
             if !windows.isEmpty {
                 cachedWindows = windows
-                let status: ProviderStatus = refresh.attempted && !refresh.fullySuccessful
-                    ? .stale(since: lastSuccessfulRefresh ?? now)
-                    : .ok
-                return snapshot(windows: windows, status: status)
+                Log.usage.debug("\(self.id, privacy: .public) quota source -> agm cached fallback")
+                return snapshot(windows: windows, status: .stale(since: lastSuccessfulRefresh ?? now))
             }
         }
 
@@ -461,6 +482,41 @@ actor AGMAntigravityProvider: UsageProvider {
             throw UsageProviderError.needsAuth
         }
         throw UsageProviderError.badResponse(status: info.exitCode == 0 ? 0 : Int(info.exitCode))
+    }
+
+    private static func liveQuota(
+        session: URLSession,
+        credential: AGMCredentialStore.Credential,
+        now: Date
+    ) async throws -> [LimitWindow] {
+        var request = URLRequest(
+            url: URL(string: "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary")!,
+            cachePolicy: .reloadIgnoringLocalCacheData,
+            timeoutInterval: 15
+        )
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(credential.accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(
+            "antigravity/hub/2.8.0 (aidev_client; os_type=darwin; arch=arm64; cl=963137146)",
+            forHTTPHeaderField: "User-Agent"
+        )
+        request.setValue(
+            "ideType=IDE_UNSPECIFIED,platform=PLATFORM_UNSPECIFIED,pluginType=GEMINI",
+            forHTTPHeaderField: "Client-Metadata"
+        )
+        let body: [String: Any]
+        if let project = credential.projectID, !project.isEmpty { body = ["project": project] }
+        else { body = [:] }
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let (data, response) = try await session.data(for: request)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        if status == 401 || status == 403 { throw UsageProviderError.needsAuth }
+        guard (200..<300).contains(status) else {
+            throw UsageProviderError.badResponse(status: status)
+        }
+        return AntigravityQuotaParser.parse(data, now: now)
     }
 
     private func snapshot(windows: [LimitWindow], status: ProviderStatus) -> ProviderSnapshot {

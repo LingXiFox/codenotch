@@ -3,9 +3,10 @@ import Foundation
 
 /// One Antigravity account managed by `agm`.
 ///
-/// Codenotch deliberately does not read agm's encrypted SQLite store or master
-/// key. `agm` owns OAuth lifecycle and encryption; this profile only carries the
-/// non-secret identity returned by its CLI.
+/// `agm` remains the source of truth for account identity, OAuth lifecycle and
+/// switching. Codenotch discovers non-secret identities through the CLI; its
+/// quota provider may borrow the matching token read-only from agm's encrypted
+/// store, but never writes or switches an account.
 struct AGMProfile: Equatable, Hashable, Sendable {
     static let providerPrefix = "gemini-agm-"
 

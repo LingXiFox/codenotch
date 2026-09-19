@@ -38,6 +38,44 @@ actor CodexLocalProvider: UsageProvider {
 
     func fetchSnapshot() async throws -> ProviderSnapshot {
         let now = Date()
+
+        // Prefer Codex's supported local app-server rate-limit surface. The web
+        // WHAM endpoint remains only a compatibility fallback.
+        if let appServer = await CodexAppServerQuota.fetch(profile: profile),
+           !appServer.windows.isEmpty {
+            let ringIDs = Self.ringIDs(from: appServer.windows)
+            let accountWindowsDebug = appServer.windows.map { window in
+                let percent = ((window.usedFraction ?? 0) * 100).rounded()
+                return "\(window.id)=\(Int(percent))%"
+            }.joined(separator: ", ")
+            Log.usage.debug("codex quota source -> app-server; \(accountWindowsDebug, privacy: .public)")
+
+            var tokenUsage: CodexTokenUsage?
+            var resetCredits: CodexResetCredits?
+            if let credential = try? CodexCredentials.load(from: authURL) {
+                async let tokenTask: CodexTokenUsage? = try? Self.fetchProfileUsage(
+                    session: session, credential: credential
+                )
+                async let resetTask: CodexResetCredits? = Self.fetchResetCredits(
+                    session: session, credential: credential
+                )
+                tokenUsage = await tokenTask
+                resetCredits = await resetTask
+            }
+
+            retryNoEarlierThan = nil
+            archive.saveBackoffUntil(nil, providerID: id)
+            return ProviderSnapshot(
+                id: id, displayName: displayName, glyph: glyph,
+                fidelity: .official, status: .ok, windows: appServer.windows,
+                headlineID: ringIDs.headline, weeklyID: ringIDs.weekly,
+                tokenUsage: tokenUsage,
+                plan: appServer.plan ?? account()?.plan?.nonEmptyPlan,
+                resetCredits: resetCredits
+            )
+        }
+
+        Log.usage.debug("codex quota source -> WHAM fallback")
         if let retryNoEarlierThan, retryNoEarlierThan > now {
             throw UsageProviderError.rateLimited(retryAfter: retryNoEarlierThan.timeIntervalSince(now))
         }
