@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
 
 jobs:
   build-rc-app:
@@ -26,7 +27,26 @@ jobs:
         run: brew install xcodegen
 
       - name: Build Release app
-        run: make build-ci
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          make build-ci > /tmp/codenotch-build.log 2>&1
+          STATUS=$?
+          set -e
+          if [ "$STATUS" -ne 0 ]; then
+            {
+              echo '### RC build failed'
+              echo
+              echo '~~~text'
+              tail -n 200 /tmp/codenotch-build.log
+              echo '~~~'
+            } > /tmp/rc-build-comment.md
+            gh pr comment 2 --body-file /tmp/rc-build-comment.md || true
+            cat /tmp/codenotch-build.log
+            exit "$STATUS"
+          fi
+          cat /tmp/codenotch-build.log
 
       - name: Package app
         run: |
@@ -36,8 +56,7 @@ jobs:
           ditto -c -k --sequesterRsrc --keepParent "$APP" Codenotch-RC.app.zip
           shasum -a 256 Codenotch-RC.app.zip > Codenotch-RC.app.zip.sha256
 
-      - name: Upload Actions artifact
-        uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@v7
         with:
           name: Codenotch-RC-${{ github.sha }}
           path: |
