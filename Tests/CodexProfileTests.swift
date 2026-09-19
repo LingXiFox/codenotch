@@ -133,6 +133,23 @@ final class CodexProfileTests: XCTestCase {
         } catch UsageProviderError.needsAuth {} catch { XCTFail("Unexpected error: \(error)") }
     }
 
+    func testRingIDsPreferPrimaryAndNeverUseSparkAsHeadline() {
+        let ids = CodexLocalProvider.ringIDs(from: [
+            LimitWindow(id: "spark", group: "Spark", label: "5h limit", usedFraction: 0.9, duration: 18_000),
+            LimitWindow(id: "secondary", label: "Weekly limit", usedFraction: 0.3, duration: 604_800),
+        ])
+        XCTAssertEqual(ids.headline, "secondary")
+        XCTAssertEqual(ids.weekly, "secondary")
+
+        let withPrimary = CodexLocalProvider.ringIDs(from: [
+            LimitWindow(id: "primary", label: "5h limit", usedFraction: 0.1, duration: 18_000),
+            LimitWindow(id: "secondary", label: "Weekly limit", usedFraction: 0.2, duration: 604_800),
+            LimitWindow(id: "spark", group: "Spark", label: "5h limit", usedFraction: 0.9, duration: 18_000),
+        ])
+        XCTAssertEqual(withPrimary.headline, "primary")
+        XCTAssertEqual(withPrimary.weekly, "secondary")
+    }
+
     func testRateLimitSurvivesRecreationWithoutBlockingTheDefault() async throws {
         let root = try home([".codex": [], ".codex-work": []])
         let personal = CodexProfile.default(home: root)

@@ -1,0 +1,100 @@
+name: RC Test App
+
+on:
+  push:
+    branches:
+      - feature/antigravity-multi-account
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  build-rc-app:
+    name: Build RC app
+    runs-on: macos-26
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          xcrun --show-sdk-version
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Build Release app
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          make build-ci > /tmp/codenotch-build.log 2>&1
+          STATUS=$?
+          set -e
+          if [ "$STATUS" -ne 0 ]; then
+            {
+              echo '### RC build failed'
+              echo
+              echo '~~~text'
+              tail -n 200 /tmp/codenotch-build.log
+              echo '~~~'
+            } > /tmp/rc-build-comment.md
+            gh pr comment 2 --body-file /tmp/rc-build-comment.md || true
+            cat /tmp/codenotch-build.log
+            exit "$STATUS"
+          fi
+          cat /tmp/codenotch-build.log
+
+      - name: Package app
+        run: |
+          set -euo pipefail
+          APP=$(find build/ci -type d -name 'Codenotch.app' -print -quit)
+          test -n "$APP"
+          ditto -c -k --sequesterRsrc --keepParent "$APP" Codenotch-RC.app.zip
+          shasum -a 256 Codenotch-RC.app.zip > Codenotch-RC.app.zip.sha256
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: Codenotch-RC-${{ github.sha }}
+          path: |
+            Codenotch-RC.app.zip
+            Codenotch-RC.app.zip.sha256
+          if-no-files-found: error
+
+      - name: Publish rolling RC prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG=rc-test
+          cat > /tmp/rc-notes.md <<EOF
+          RC test build from \`feature/antigravity-multi-account\`.
+
+          Commit: \`${GITHUB_SHA}\`
+
+          This build is ad-hoc signed and intended only for real-device validation of AGM multi-account and Codex quota fixes.
+
+          After moving Codenotch.app to /Applications, if macOS blocks the app because of quarantine:
+
+              xattr -dr com.apple.quarantine /Applications/Codenotch.app
+          EOF
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release view "$TAG" --json assets -q '.assets[].name' | while read -r asset; do
+              gh release delete-asset "$TAG" "$asset" --yes
+            done
+            gh api -X PATCH "repos/${GITHUB_REPOSITORY}/git/refs/tags/${TAG}" \
+              -f sha="${GITHUB_SHA}" -F force=true >/dev/null
+            gh release edit "$TAG" --prerelease \
+              --title "Codenotch RC Test (${GITHUB_SHA:0:7})" \
+              --notes-file /tmp/rc-notes.md >/dev/null
+            gh release upload "$TAG" Codenotch-RC.app.zip Codenotch-RC.app.zip.sha256
+          else
+            gh release create "$TAG" Codenotch-RC.app.zip Codenotch-RC.app.zip.sha256 \
+              --prerelease --target "${GITHUB_SHA}" \
+              --title "Codenotch RC Test (${GITHUB_SHA:0:7})" \
+              --notes-file /tmp/rc-notes.md
+          fi

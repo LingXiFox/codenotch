@@ -68,6 +68,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// work login's sessions spin the work ring and nobody else's.
     private let claudeProfiles = ClaudeProfile.discover()
     private let codexProfiles = CodexProfile.discover()
+    /// AGM is optional. When present, each account becomes an independent
+    /// Antigravity provider; tests never spawn external account tooling.
+    private let agmProfiles = Runtime.isUnderTest ? [] : AGMProfile.discover()
     /// Held as concrete providers, not just handed to the store: the token
     /// refresher needs to ask one of them how long its token has left, and the
     /// protocol has no business carrying that.
@@ -140,10 +143,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Log.usage.info("codex profiles: \(self.codexProfiles.map(\.displayPath).joined(separator: ", "), privacy: .public)")
             let claudeProviders = claudeProfiles.map { ClaudeOAuthProvider(profile: $0) }
             self.claudeProviders = claudeProviders
+            let antigravityProviders: [UsageProvider] = agmProfiles.isEmpty
+                ? [AntigravityProvider()]
+                : agmProfiles.map { AGMAntigravityProvider(profile: $0) }
             let allProviders: [UsageProvider] = claudeProviders
                 + [CursorLocalProvider()]
                 + codexProfiles.map { CodexLocalProvider(profile: $0) }
-                + [AntigravityProvider(),
+                + antigravityProviders
+                + [
                    GLMProvider(), MiniMaxProvider(web: miniMaxWeb), GrokLocalProvider(), DevinLocalProvider(), OpenCodeProvider(),
                    CommandCodeProvider(), GitHubCopilotProvider(), KimiProvider(), KiroProvider(),
                    OllamaLocalProvider(endpoint: URL(string: preferences.ollamaEndpoint)!),
@@ -658,11 +665,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // still working without you switching to it.
         var monitors: [String: any AgentActivityMonitor] = [
             "cursor": CursorActivityMonitor(),
-            "gemini": AntigravityActivityMonitor(),
             "grok": GrokActivityMonitor(),
             "gemini-api": GeminiAPIActivityMonitor(),
             "kimi": KimiActivityMonitor(),
         ]
+        let antigravityActivityID = agmProfiles.first(where: { $0.isAgyActive })?.id
+            ?? agmProfiles.first(where: { $0.isIDEActive })?.id
+            ?? agmProfiles.first?.id
+            ?? "gemini"
+        monitors[antigravityActivityID] = AntigravityActivityMonitor()
         var claudeMonitors: [ClaudeSessionMonitor] = []
         for profile in claudeProfiles {
             let monitor = ClaudeSessionMonitor(

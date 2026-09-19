@@ -38,6 +38,44 @@ actor CodexLocalProvider: UsageProvider {
 
     func fetchSnapshot() async throws -> ProviderSnapshot {
         let now = Date()
+
+        // Prefer Codex's supported local app-server rate-limit surface. The web
+        // WHAM endpoint remains only a compatibility fallback.
+        if let appServer = await CodexAppServerQuota.fetch(profile: profile),
+           !appServer.windows.isEmpty {
+            let ringIDs = Self.ringIDs(from: appServer.windows)
+            let accountWindowsDebug = appServer.windows.map { window in
+                let percent = ((window.usedFraction ?? 0) * 100).rounded()
+                return "\(window.id)=\(Int(percent))%"
+            }.joined(separator: ", ")
+            Log.usage.debug("codex quota source -> app-server; \(accountWindowsDebug, privacy: .public)")
+
+            var tokenUsage: CodexTokenUsage?
+            var resetCredits: CodexResetCredits?
+            if let credential = try? CodexCredentials.load(from: authURL) {
+                async let tokenTask: CodexTokenUsage? = try? Self.fetchProfileUsage(
+                    session: session, credential: credential
+                )
+                async let resetTask: CodexResetCredits? = Self.fetchResetCredits(
+                    session: session, credential: credential
+                )
+                tokenUsage = await tokenTask
+                resetCredits = await resetTask
+            }
+
+            retryNoEarlierThan = nil
+            archive.saveBackoffUntil(nil, providerID: id)
+            return ProviderSnapshot(
+                id: id, displayName: displayName, glyph: glyph,
+                fidelity: .official, status: .ok, windows: appServer.windows,
+                headlineID: ringIDs.headline, weeklyID: ringIDs.weekly,
+                tokenUsage: tokenUsage,
+                plan: appServer.plan ?? account()?.plan?.nonEmptyPlan,
+                resetCredits: resetCredits
+            )
+        }
+
+        Log.usage.debug("codex quota source -> WHAM fallback")
         if let retryNoEarlierThan, retryNoEarlierThan > now {
             throw UsageProviderError.rateLimited(retryAfter: retryNoEarlierThan.timeIntervalSince(now))
         }
@@ -79,6 +117,15 @@ actor CodexLocalProvider: UsageProvider {
             from: data,
             includeExtras: Preferences.storedShowCodexExtraLimits()
         )
+        let ringIDs = Self.ringIDs(from: windows)
+        let accountWindowsDebug = windows
+            .filter { $0.group == nil }
+            .map { window in
+                let percent = ((window.usedFraction ?? 0) * 100).rounded()
+                return "\(window.id)=\(Int(percent))%"
+            }
+            .joined(separator: ", ")
+        Log.usage.debug("codex account windows -> \(accountWindowsDebug, privacy: .public)")
 
         // The profile page's token statistics are the source for the chart and
         // totals.
@@ -90,16 +137,27 @@ actor CodexLocalProvider: UsageProvider {
         return ProviderSnapshot(
             id: id, displayName: displayName, glyph: glyph,
             fidelity: .official, status: .ok, windows: windows,
-            // Named, not positional. `windows.first` would let Spark take the
-            // ring whenever primary is missing — extras are appended after the
-            // main pair, but a Spark-only payload still leads with spark.
-            headlineID: "primary",
-            // The weekly ring is the account weekly, never Spark's own weekly.
-            weeklyID: "secondary",
+            headlineID: ringIDs.headline,
+            weeklyID: ringIDs.weekly,
             tokenUsage: profileUsage,
             plan: CodexUsage.plan(from: data) ?? account()?.plan?.nonEmptyPlan,
             resetCredits: await resetCredits
         )
+    }
+
+    nonisolated static func ringIDs(from windows: [LimitWindow]) -> (headline: String?, weekly: String?) {
+        let accountWindows = windows.filter { $0.group == nil }
+        let headline = accountWindows.first(where: { $0.id == "primary" })?.id
+            ?? accountWindows.first?.id
+
+        let weekly = accountWindows.first(where: isWeeklyish)?.id
+            ?? accountWindows.first(where: { $0.id == "secondary" })?.id
+        return (headline, weekly)
+    }
+
+    private nonisolated static func isWeeklyish(_ window: LimitWindow) -> Bool {
+        if let duration = window.duration, abs(duration - 7 * 86400) <= 3600 { return true }
+        return window.id == "secondary" || window.label.localizedCaseInsensitiveContains("weekly")
     }
 
     private static func fetchProfileUsage(
