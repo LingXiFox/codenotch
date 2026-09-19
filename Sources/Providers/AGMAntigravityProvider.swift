@@ -254,15 +254,16 @@ enum AGMBridge {
 
     private static func parseListRow(_ line: String) -> ParsedListRow? {
         let fields = line.split(whereSeparator: \.isWhitespace).map(String.init)
-        guard let email = fields.first, email.contains("@"), fields.count >= 4 else { return nil }
+        guard let email = fields.first, email.contains("@") else { return nil }
 
-        let tail = Array(fields.suffix(3))
+        let summaryColumnCount = min(3, max(fields.count - 1, 0))
+        let tail = Array(fields.suffix(summaryColumnCount))
         let summary = ListSummary(
             gemProRemaining: parsePercent(tail[safe: 0]),
             gemFlashRemaining: parsePercent(tail[safe: 1]),
             claudeRemaining: parsePercent(tail[safe: 2])
         )
-        let status = fields.dropFirst().dropLast(3)
+        let status = fields.dropFirst().dropLast(summaryColumnCount)
             .filter { $0 != "-" }
             .joined(separator: ",")
             .lowercased()
