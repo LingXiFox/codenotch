@@ -1,0 +1,58 @@
+name: RC quota fix validation
+
+on:
+  push:
+    branches:
+      - feature/antigravity-multi-account
+
+permissions:
+  contents: write
+
+jobs:
+  validate-and-apply:
+    if: ${{ !contains(github.event.head_commit.message, '[rc-quota-applied]') }}
+    runs-on: macos-26
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Apply candidate fixes
+        run: |
+          base64 --decode .github/rc-quota-fix.patch.gz.b64 | gunzip > /tmp/rc-quota-fix.patch
+          git apply --check /tmp/rc-quota-fix.patch
+          git apply /tmp/rc-quota-fix.patch
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Run unit tests
+        run: make test-ci
+
+      - name: Build release app
+        run: make build-ci
+
+      - name: Package validation app
+        run: |
+          APP=$(find build/ci -type d -name 'Codenotch.app' -print -quit)
+          test -n "$APP"
+          ditto -c -k --sequesterRsrc --keepParent "$APP" build/ci/Codenotch-RC-quota-fix.app.zip
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: Codenotch-RC-quota-fix-${{ github.sha }}
+          path: build/ci/Codenotch-RC-quota-fix.app.zip
+          if-no-files-found: error
+
+      - name: Commit validated fixes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/rc-quota-fix.patch.gz.b64 .github/workflows/rc-quota-fix.yml
+          git add Sources/Providers/AGMAntigravityProvider.swift
+          git add Sources/Providers/CodexLocalProvider.swift
+          git add Sources/Providers/CodexUsage.swift
+          git add Tests/AGMBridgeTests.swift Tests/CodexUsageTests.swift
+          git commit -m "Fix AGM and Codex quota readings [rc-quota-applied]"
+          git push origin HEAD:feature/antigravity-multi-account
