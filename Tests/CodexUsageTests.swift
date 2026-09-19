@@ -227,6 +227,45 @@ final class CodexUsageTests: XCTestCase {
         XCTAssertEqual(result.map(\.usedFraction), [0.29, 0.40])
     }
 
+    func testNumericStringsAreParsed() throws {
+        let result = try windows("""
+        {"rate_limit":{
+          "primary_window":{"used_percent":"25.5","limit_window_seconds":"18000","reset_at":"1800001000"},
+          "secondary_window":{"used_percent":"10","limit_window_seconds":"604800","reset_after_seconds":"120"}}}
+        """)
+        XCTAssertEqual(result.map(\.id), ["primary", "secondary"])
+        XCTAssertEqual(result.first?.usedFraction ?? -1, 0.255, accuracy: 0.0001)
+        XCTAssertEqual(result.first?.duration, 18000)
+        XCTAssertEqual(result.first?.resetsAt, Date(timeIntervalSince1970: 1_800_001_000))
+        XCTAssertEqual(result.last?.resetsAt, Date(timeIntervalSince1970: 1_800_000_120))
+    }
+
+    func testRateLimitsAliasesPercentLeftAndResetTimeMsAreParsed() throws {
+        let result = try windows("""
+        {"rate_limits":{
+          "five_hour":{"percent_left":40,"windowDurationMins":300,"reset_time_ms":1800001000000},
+          "weekly":{"percent_left":"70","windowDurationMins":"10080","reset_time_ms":"1800600000000"}}}
+        """)
+        XCTAssertEqual(result.map(\.id), ["primary", "secondary"])
+        XCTAssertEqual(result.map(\.usedFraction), [0.60, 0.30])
+        XCTAssertEqual(result.map(\.duration), [18000, 604800])
+        XCTAssertEqual(result.first?.resetsAt, Date(timeIntervalSince1970: 1_800_001_000))
+        XCTAssertEqual(result.last?.resetsAt, Date(timeIntervalSince1970: 1_800_600_000))
+    }
+
+    func testCamelCaseWindowFieldsAreParsed() throws {
+        let result = try windows("""
+        {"rate_limit":{
+          "primary":{"usedPercent":25,"windowDurationMins":300,"resetsAt":1800001000},
+          "secondary":{"usedPercent":"10","windowDurationMins":"10080","resetsAt":"1800600000"}}}
+        """)
+        XCTAssertEqual(result.map(\.id), ["primary", "secondary"])
+        XCTAssertEqual(result.map(\.usedFraction), [0.25, 0.10])
+        XCTAssertEqual(result.map(\.duration), [18000, 604800])
+        XCTAssertEqual(result.first?.resetsAt, Date(timeIntervalSince1970: 1_800_001_000))
+        XCTAssertEqual(result.last?.resetsAt, Date(timeIntervalSince1970: 1_800_600_000))
+    }
+
     /// An empty additional_rate_limits array is the same as omitting it.
     func testEmptyAdditionalRateLimitsLeaveTheMainWindowsUnchanged() throws {
         let result = try windows("""

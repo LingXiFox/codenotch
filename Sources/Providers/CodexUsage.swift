@@ -130,7 +130,9 @@ enum CodexUsage {
 
         private enum CodingKeys: String, CodingKey {
             case rate_limit
+            case rate_limits
             case plan_type
+            case planType
             case additional_rate_limits
             case code_review_rate_limit
         }
@@ -140,8 +142,8 @@ enum CodexUsage {
             // A bad main object must not discard Spark/code review, and a bad
             // extra must not discard a good main pair. `try` here used to
             // turn a single unreadable window into a failed fetch.
-            rate_limit = try? container.decodeIfPresent(RateLimit.self, forKey: .rate_limit)
-            plan_type = try? container.decodeIfPresent(String.self, forKey: .plan_type)
+            rate_limit = decodeFirstRateLimit(in: container, keys: [.rate_limit, .rate_limits])
+            plan_type = decodeFirstString(in: container, keys: [.plan_type, .planType])
             let extras = (try? container.decodeIfPresent(
                 [FailableAdditionalRateLimit].self, forKey: .additional_rate_limits
             )) ?? []
@@ -149,6 +151,30 @@ enum CodexUsage {
             code_review_rate_limit = try? container.decodeIfPresent(
                 RateLimit.self, forKey: .code_review_rate_limit
             )
+        }
+
+        private func decodeFirstRateLimit(
+            in container: KeyedDecodingContainer<CodingKeys>,
+            keys: [CodingKeys]
+        ) -> RateLimit? {
+            for key in keys {
+                if let value = try? container.decodeIfPresent(RateLimit.self, forKey: key) {
+                    return value
+                }
+            }
+            return nil
+        }
+
+        private func decodeFirstString(
+            in container: KeyedDecodingContainer<CodingKeys>,
+            keys: [CodingKeys]
+        ) -> String? {
+            for key in keys {
+                if let value = try? container.decodeIfPresent(String.self, forKey: key) {
+                    return value
+                }
+            }
+            return nil
         }
     }
 
@@ -175,7 +201,12 @@ enum CodexUsage {
         let secondary_window: Window?
 
         private enum CodingKeys: String, CodingKey {
-            case primary_window, secondary_window
+            case five_hour
+            case primary_window
+            case primary
+            case weekly
+            case secondary_window
+            case secondary
         }
 
         init(from decoder: Decoder) throws {
@@ -183,8 +214,26 @@ enum CodexUsage {
             // One unreadable window must not take its sibling with it —
             // code review's weekly once vanished because the 5h object
             // could not decode.
-            primary_window = try? container.decode(Window.self, forKey: .primary_window)
-            secondary_window = try? container.decode(Window.self, forKey: .secondary_window)
+            primary_window = Self.decodeFirstWindow(
+                in: container,
+                keys: [.five_hour, .primary_window, .primary]
+            )
+            secondary_window = Self.decodeFirstWindow(
+                in: container,
+                keys: [.weekly, .secondary_window, .secondary]
+            )
+        }
+
+        private static func decodeFirstWindow(
+            in container: KeyedDecodingContainer<CodingKeys>,
+            keys: [CodingKeys]
+        ) -> Window? {
+            for key in keys {
+                if let value = try? container.decodeIfPresent(Window.self, forKey: key) {
+                    return value
+                }
+            }
+            return nil
         }
     }
 
@@ -208,22 +257,53 @@ enum CodexUsage {
         let reset_after_seconds: Double?
 
         private enum CodingKeys: String, CodingKey {
-            case limit_window_seconds, used_percent, reset_at, reset_after_seconds
+            case limit_window_seconds
+            case windowDurationMins
+            case used_percent
+            case usedPercent
+            case percent_left
+            case reset_at
+            case resetsAt
+            case reset_time_ms
+            case reset_after_seconds
         }
 
         init(from decoder: Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
             // Null or non-numeric `used_percent` used to fail the whole
             // RateLimit object, so a good weekly window never made it out.
-            limit_window_seconds = Self.number(container, .limit_window_seconds)
-            used_percent = Self.number(container, .used_percent)
-            reset_at = Self.number(container, .reset_at)
+            limit_window_seconds = Self.firstNumber(container, [.limit_window_seconds])
+                ?? Self.firstNumber(container, [.windowDurationMins]).map { $0 * 60 }
+            used_percent = Self.firstNumber(container, [.used_percent, .usedPercent])
+                ?? Self.firstNumber(container, [.percent_left]).map { 100 - $0 }
+            reset_at = Self.firstNumber(container, [.reset_at, .resetsAt])
+                ?? Self.firstNumber(container, [.reset_time_ms]).map { $0 / 1000 }
             reset_after_seconds = Self.number(container, .reset_after_seconds)
         }
 
         private static func number(_ container: KeyedDecodingContainer<CodingKeys>,
                                    _ key: CodingKeys) -> Double? {
-            try? container.decode(Double.self, forKey: key)
+            if let value = try? container.decodeIfPresent(Double.self, forKey: key) {
+                return value
+            }
+            if let value = try? container.decodeIfPresent(Int.self, forKey: key) {
+                return Double(value)
+            }
+            if let value = try? container.decodeIfPresent(String.self, forKey: key) {
+                let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+                return Double(trimmed)
+            }
+            return nil
+        }
+
+        private static func firstNumber(_ container: KeyedDecodingContainer<CodingKeys>,
+                                        _ keys: [CodingKeys]) -> Double? {
+            for key in keys {
+                if let value = number(container, key) {
+                    return value
+                }
+            }
+            return nil
         }
     }
 
