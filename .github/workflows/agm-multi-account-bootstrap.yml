@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 jobs:
-  patch-test-build:
+  test-build:
     if: ${{ !contains(github.event.head_commit.message, '[agm-bootstrap]') }}
     runs-on: macos-26
     steps:
@@ -17,20 +17,11 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Apply multi-account integration patch
-        env:
-          PATCH_B64: ZnJvbSBwYXRobGliIGltcG9ydCBQYXRoCgpkZWYgcmVwbGFjZV9vbmNlKHBhdGgsIG9sZCwgbmV3KToKICAgIHAgPSBQYXRoKHBhdGgpCiAgICBzID0gcC5yZWFkX3RleHQoKQogICAgaWYgb2xkIG5vdCBpbiBzOgogICAgICAgIHJhaXNlIFN5c3RlbUV4aXQoZiJwYXR0ZXJuIG5vdCBmb3VuZCBpbiB7cGF0aH06IHtvbGQhcn0iKQogICAgcC53cml0ZV90ZXh0KHMucmVwbGFjZShvbGQsIG5ldywgMSkpCgpyZXBsYWNlX29uY2UoCiAgICAiU291cmNlcy9BcHAvQXBwRGVsZWdhdGUuc3dpZnQiLAogICAgIiAgICBwcml2YXRlIGxldCBjb2RleFByb2ZpbGVzID0gQ29kZXhQcm9maWxlLmRpc2NvdmVyKCkiLAogICAgIiAgICBwcml2YXRlIGxldCBjb2RleFByb2ZpbGVzID0gQ29kZXhQcm9maWxlLmRpc2NvdmVyKClcbiIKICAgICIgICAgLy8vIEFHTSBpcyBvcHRpb25hbC4gV2hlbiBwcmVzZW50LCBlYWNoIGFjY291bnQgYmVjb21lcyBhbiBpbmRlcGVuZGVudFxuIgogICAgIiAgICAvLy8gQW50aWdyYXZpdHkgcHJvdmlkZXI7IHRlc3RzIG5ldmVyIHNwYXduIGV4dGVybmFsIGFjY291bnQgdG9vbGluZy5cbiIKICAgICIgICAgcHJpdmF0ZSBsZXQgYWdtUHJvZmlsZXMgPSBSdW50aW1lLmlzVW5kZXJUZXN0ID8gW10gOiBBR01Qcm9maWxlLmRpc2NvdmVyKCkiCikKCnJlcGxhY2Vfb25jZSgKICAgICJTb3VyY2VzL0FwcC9BcHBEZWxlZ2F0ZS5zd2lmdCIsCiAgICAiICAgICAgICAgICAgc2VsZi5jbGF1ZGVQcm92aWRlcnMgPSBjbGF1ZGVQcm92aWRlcnMiLAogICAgIiAgICAgICAgICAgIHNlbGYuY2xhdWRlUHJvdmlkZXJzID0gY2xhdWRlUHJvdmlkZXJzXG4iCiAgICAiICAgICAgICAgICAgbGV0IGFudGlncmF2aXR5UHJvdmlkZXJzOiBbVXNhZ2VQcm92aWRlcl0gPSBhZ21Qcm9maWxlcy5pc0VtcHR5XG4iCiAgICAiICAgICAgICAgICAgICAgID8gW0FudGlncmF2aXR5UHJvdmlkZXIoKV1cbiIKICAgICIgICAgICAgICAgICAgICAgOiBhZ21Qcm9maWxlcy5tYXAgeyBBR01BbnRpZ3Jhdml0eVByb3ZpZGVyKHByb2ZpbGU6ICQwKSB9IgopCgpyZXBsYWNlX29uY2UoCiAgICAiU291cmNlcy9BcHAvQXBwRGVsZWdhdGUuc3dpZnQiLAogICAgIiAgICAgICAgICAgICAgICArIFtBbnRpZ3Jhdml0eVByb3ZpZGVyKCksIiwKICAgICIgICAgICAgICAgICAgICAgKyBhbnRpZ3Jhdml0eVByb3ZpZGVyc1xuIgogICAgIiAgICAgICAgICAgICAgICArIFsiCikKCnJlcGxhY2Vfb25jZSgKICAgICJTb3VyY2VzL0FwcC9BcHBEZWxlZ2F0ZS5zd2lmdCIsCiAgICAnICAgICAgICAgICAgImdlbWluaSI6IEFudGlncmF2aXR5QWN0aXZpdHlNb25pdG9yKCksXG4nLAogICAgIiIKKQoKcmVwbGFjZV9vbmNlKAogICAgIlNvdXJjZXMvQXBwL0FwcERlbGVnYXRlLnN3aWZ0IiwKICAgICcgICAgICAgICAgICAia2ltaSI6IEtpbWlBY3Rpdml0eU1vbml0b3IoKSxcbiAgICAgICAgXScsCiAgICAnICAgICAgICAgICAgImtpbWkiOiBLaW1pQWN0aXZpdHlNb25pdG9yKCksXG4nCiAgICAnICAgICAgICBdXG4nCiAgICAnICAgICAgICBsZXQgYW50aWdyYXZpdHlBY3Rpdml0eUlEID0gYWdtUHJvZmlsZXMuZmlyc3Qod2hlcmU6IHsgJDAuaXNBZ3lBY3RpdmUgfSk/LmlkXG4nCiAgICAnICAgICAgICAgICAgPz8gYWdtUHJvZmlsZXMuZmlyc3Qod2hlcmU6IHsgJDAuaXNJREVBY3RpdmUgfSk/LmlkXG4nCiAgICAnICAgICAgICAgICAgPz8gYWdtUHJvZmlsZXMuZmlyc3Q/LmlkXG4nCiAgICAnICAgICAgICAgICAgPz8gImdlbWluaSJcbicKICAgICcgICAgICAgIG1vbml0b3JzW2FudGlncmF2aXR5QWN0aXZpdHlJRF0gPSBBbnRpZ3Jhdml0eUFjdGl2aXR5TW9uaXRvcigpJwopCgpyZXBsYWNlX29uY2UoCiAgICAiU291cmNlcy9TZXR0aW5ncy9QcmVmZXJlbmNlcy5zd2lmdCIsCiAgICAiICAgICAgICAgICAgc2VlblByb3ZpZGVycy5zdWJ0cmFjdChzZWVuUHJvdmlkZXJzLmZpbHRlcihTZWxmLmlzTW9kZWxDZWxsKSkiLAogICAgIiAgICAgICAgICAgIHNlZW5Qcm92aWRlcnMuc3VidHJhY3Qoc2VlblByb3ZpZGVycy5maWx0ZXIoU2VsZi5pc01vZGVsQ2VsbCkpXG4iCiAgICAnICAgICAgICAgICAgaWYgY29ubmVjdGVkUHJvdmlkZXJzLmNvbnRhaW5zKCJnZW1pbmkiKSB7XG4nCiAgICAiICAgICAgICAgICAgICAgIGNvbm5lY3RlZFByb3ZpZGVycy5mb3JtVW5pb24oZGlzY292ZXJlZC5maWx0ZXIoQUdNUHJvZmlsZS5pc0FHTShwcm92aWRlcklEOikpKVxuIgogICAgIiAgICAgICAgICAgIH0iCikKCnJlcGxhY2Vfb25jZSgKICAgICJTb3VyY2VzL1NldHRpbmdzL1NldHRpbmdzVmlldy5zd2lmdCIsCiAgICAnaWYgaXNDb25uZWN0ZWQsIHByb3ZpZGVyLmlkID09ICJnZW1pbmkiIHsnLAogICAgJ2lmIGlzQ29ubmVjdGVkLCBwcm92aWRlci5pZCA9PSAiZ2VtaW5pIiB8fCBBR01Qcm9maWxlLmlzQUdNKHByb3ZpZGVySUQ6IHByb3ZpZGVyLmlkKSB7JwopCg==
+      - name: Verify integration is present
         run: |
-          echo "$PATCH_B64" | base64 --decode > /tmp/agm_patch.py
-          python3 /tmp/agm_patch.py
-
-      - name: Commit integration patch
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add Sources
-          git commit -m "Wire AGM multi-account runtime [agm-bootstrap]"
-          git push origin HEAD:feature/antigravity-multi-account
+          grep -q "private let agmProfiles" Sources/App/AppDelegate.swift
+          grep -q "actor AGMAntigravityProvider" Sources/Providers/AGMAntigravityProvider.swift
+          grep -q "AGMBridgeTests" Tests/AGMBridgeTests.swift
 
       - name: Install XcodeGen
         run: brew install xcodegen
@@ -40,21 +31,26 @@ jobs:
         continue-on-error: true
         run: |
           set +e
-          xcodebuild -version > agm-bootstrap.log 2>&1
-          xcrun --show-sdk-version >> agm-bootstrap.log 2>&1
-          make test-ci >> agm-bootstrap.log 2>&1
-          TEST_STATUS=$?
-          make build-ci >> agm-bootstrap.log 2>&1
-          BUILD_STATUS=$?
-          STATUS=$(( TEST_STATUS || BUILD_STATUS ))
-          echo "TEST_STATUS=$TEST_STATUS" >> agm-bootstrap.log
-          echo "BUILD_STATUS=$BUILD_STATUS" >> agm-bootstrap.log
-          echo "status=$STATUS" >> "$GITHUB_OUTPUT"
+          {
+            echo "== toolchain =="
+            xcodebuild -version
+            xcrun --show-sdk-version
+            echo "== tests =="
+            make test-ci
+            TEST_STATUS=$?
+            echo "== release build =="
+            make build-ci
+            BUILD_STATUS=$?
+            echo "TEST_STATUS=$TEST_STATUS"
+            echo "BUILD_STATUS=$BUILD_STATUS"
+            exit $(( TEST_STATUS || BUILD_STATUS ))
+          } > agm-bootstrap.log 2>&1
+          echo "status=$?" >> "$GITHUB_OUTPUT"
 
       - name: Package app bundle
         if: steps.build.outputs.status == '0'
         run: |
-          APP=$(find build/ci/DerivedData/Build/Products/Release -maxdepth 1 -name 'Codenotch.app' -print -quit)
+          APP=$(find build/ci -type d -name 'Codenotch.app' -print -quit)
           test -n "$APP"
           ditto -c -k --sequesterRsrc --keepParent "$APP" build/ci/Codenotch.app.zip
           make dmg-ci
@@ -62,14 +58,17 @@ jobs:
       - name: Record bootstrap result
         if: always()
         run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           STATUS="FAIL"
           if [ "${{ steps.build.outputs.status }}" = "0" ]; then STATUS="PASS"; fi
           {
             echo "# AGM multi-account bootstrap: $STATUS"
             echo
-            echo "Source commit: ${GITHUB_SHA}"
+            echo "Validated commit: ${GITHUB_SHA}"
             echo
-            tail -n 160 agm-bootstrap.log 2>/dev/null || true
+            echo
+            tail -n 200 agm-bootstrap.log 2>/dev/null || true
           } > AGM_BOOTSTRAP_STATUS.md
           git add AGM_BOOTSTRAP_STATUS.md
           git commit -m "Record AGM bootstrap $STATUS [agm-bootstrap]" || true
