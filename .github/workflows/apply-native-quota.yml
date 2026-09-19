@@ -1,0 +1,26 @@
+name: Apply Native Quota Patch
+on:
+  push:
+    branches: [feature/antigravity-multi-account]
+permissions:
+  contents: write
+jobs:
+  apply:
+    if: ${{ !contains(github.event.head_commit.message, '[native-source-applied]') }}
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Apply native quota integration
+        run: |
+          set -euo pipefail
+          base64 --decode .github/native-quota.patch.gz.b64 | gunzip > /tmp/native-quota.patch
+          git apply --check /tmp/native-quota.patch
+          git apply /tmp/native-quota.patch
+          git rm .github/native-quota.patch.gz.b64 .github/workflows/apply-native-quota.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Sources/Providers Tests
+          git commit -m "Use native quota sources for AGM and Codex [native-source-applied]"
+          git push origin HEAD:feature/antigravity-multi-account
