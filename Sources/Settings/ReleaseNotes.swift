@@ -32,6 +32,58 @@ enum ReleaseNotes {
     static var all: [ReleaseNote] {
         [
             ReleaseNote(
+                version: "1.15.0",
+                headline: L10n.t("QianwenAI reads again, fewer false alerts, and a steadier Windows notch."),
+                changes: [
+                    ReleaseNote.Change(
+                        title: L10n.t("QianwenAI reads again"),
+                        detail: L10n.t("The ring no longer answers \"HTTP 0\" on every refresh, and says so plainly when QianwenAI refuses a request.")
+                    ),
+                    ReleaseNote.Change(
+                        title: L10n.t("Only real resets"),
+                        detail: L10n.t("A countdown that drifts by a few seconds no longer announces a reset, while a real one still does.")
+                    ),
+                    ReleaseNote.Change(
+                        title: L10n.t("Grok, even headless"),
+                        detail: L10n.t("Grok shows as working during grok -p runs, not only in its own window.")
+                    ),
+                    ReleaseNote.Change(
+                        title: L10n.t("The Windows notch stays clear of the taskbar"),
+                        detail: L10n.t("It sits inside the work area and finds its edge again when the taskbar moves, and its rings dim when a reading is old, with rounded ends, as on the Mac.")
+                    ),
+                    ReleaseNote.Change(
+                        title: L10n.t("Smaller fixes"),
+                        detail: L10n.t("Checking for updates can no longer hang on \"Checking…\", a small context reading still draws an arc, Claude's account file is only read again when it changes, and the Traditional Chinese uses Taiwan's own words.")
+                    ),
+                ]
+            ),
+            ReleaseNote(
+                version: "1.14.0",
+                headline: L10n.t("A new Settings, QianwenAI, Traditional Chinese, and a Windows notch you can carry to any edge."),
+                changes: [
+                    ReleaseNote.Change(
+                        title: L10n.t("A new Settings"),
+                        detail: L10n.t("Dark and quiet, with a title over every pane, the providers' own logos, and DeepSeek, Ollama and LM Studio folded under Accounts. Everything answers the pointer, and an Update button appears beside the version when there is one.")
+                    ),
+                    ReleaseNote.Change(
+                        title: L10n.t("QianwenAI"),
+                        detail: L10n.t("A ring for QianwenAI's Token Plan, signed into from Codenotch.")
+                    ),
+                    ReleaseNote.Change(
+                        title: L10n.t("繁體中文, and every language complete"),
+                        detail: L10n.t("Traditional Chinese on the Mac and Windows, picked up automatically in Taiwan and Hong Kong, and Simplified Chinese and Ukrainian now cover every string.")
+                    ),
+                    ReleaseNote.Change(
+                        title: L10n.t("The Windows notch, carried anywhere"),
+                        detail: L10n.t("Drag it by its handle to any edge, open Settings from its orb, click a ring to read it again or right-click for more, and the hover card stays clear of the taskbar.")
+                    ),
+                    ReleaseNote.Change(
+                        title: L10n.t("Fresh logos"),
+                        detail: L10n.t("MiniMax, QianwenAI, Z.ai, Kimi, OpenCode and Command Code now show their own marks.")
+                    ),
+                ]
+            ),
+            ReleaseNote(
                 version: "1.13.1",
                 headline: L10n.t("Fixes a crash on Chinese Macs, and a Deny on the keychain question now means no."),
                 changes: [

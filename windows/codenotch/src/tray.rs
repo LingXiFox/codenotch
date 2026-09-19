@@ -87,7 +87,7 @@ fn build_menu_from(app: &AppHandle, lang: &str, lines: &[(String, String, bool)]
 
 /// The language the menu speaks, already resolved: `traymenu` picks its wording by code and has no
 /// "auto" of its own.
-fn language(app: &AppHandle) -> String {
+pub(crate) fn language(app: &AppHandle) -> String {
     let st = app.state::<crate::AppState>();
     let raw = st.cfg.lock().unwrap().lang.clone();
     if raw == "auto" {
@@ -158,37 +158,13 @@ pub fn refresh_menu(app: &AppHandle) {
 /// items. Settings, language, hooks and the rest arrive as commands from the settings window.
 fn handle(app: &AppHandle, id: &str) {
     if let Some(provider) = id.strip_prefix("refresh:") {
-        refresh_provider(app, provider);
+        crate::refresh_provider(app, provider);
         return;
     }
     match id {
-        "refresh" => {
-            for provider in crate::TRAY_PROVIDER_IDS {
-                refresh_provider(app, provider);
-            }
-            let a = app.clone();
-            std::thread::spawn(move || crate::reload_glyphs(&a));
-        }
+        "refresh" => crate::refresh_all(app),
         "settings" => crate::settings_window::open(app),
         "quit" => app.exit(0),
         _ => {}
-    }
-}
-
-/// Asks one provider to read again. Claude's backoff is cleared first: asking for a reading is the
-/// user saying they want it now, not in fifteen minutes.
-fn refresh_provider(app: &AppHandle, provider: &str) {
-    match provider {
-        "codex" => crate::codex::request_refresh(),
-        "cursor" => crate::cursor::request_refresh(),
-        "gemini" => crate::antigravity::request_refresh(),
-        _ => {
-            {
-                let st = app.state::<crate::AppState>();
-                let mut u = st.usage.lock().unwrap();
-                u.backoff_until = 0;
-            }
-            crate::usage::request_refresh();
-        }
     }
 }

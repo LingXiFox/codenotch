@@ -76,6 +76,34 @@ final class Updater: NSObject, ObservableObject, SPUUpdaterDelegate {
     func checkNow() {
         outcome = .checking
         controller.updater.checkForUpdates()
+        // Never left on "Checking…". Sparkle reports every ending it knows
+        // about below, but a copy whose updater cannot reach its own helper —
+        // a damaged install, a helper macOS blocked — reports nothing at all.
+        let started = checkGeneration &+ 1
+        checkGeneration = started
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.checkTimeout) { [weak self] in
+            guard let self, self.checkGeneration == started else { return }
+            self.outcome = Self.outcome(afterTimeoutFrom: self.outcome)
+        }
+    }
+
+    /// How long a check may stay unanswered before it is called stalled.
+    static let checkTimeout: TimeInterval = 45
+    private var checkGeneration = 0
+
+    /// Pure, so both endings can be tested without Sparkle.
+    static func outcome(afterTimeoutFrom current: Outcome) -> Outcome {
+        guard current == .checking else { return current }
+        return .failed(L10n.t("The update check didn't finish. Try again, or download the latest Codenotch from hivinz.com."))
+    }
+
+    /// A cycle that ended without saying found or not found — the person
+    /// closed Sparkle's window, or a download already in progress answered the
+    /// request — must not leave the status reading "Checking…".
+    static func outcome(afterCycleFrom current: Outcome, errorCode: Int?) -> Outcome {
+        guard current == .checking else { return current }
+        guard let errorCode else { return .idle }
+        return isUnreachable(errorCode) ? .unreachable : .idle
     }
 
     // MARK: - SPUUpdaterDelegate
@@ -87,6 +115,15 @@ final class Updater: NSObject, ObservableObject, SPUUpdaterDelegate {
     nonisolated func updater(_ updater: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
         let version = item.displayVersionString
         Task { @MainActor in self.outcome = .found(version) }
+    }
+
+    nonisolated func updater(_ updater: SPUUpdater,
+                             didFinishUpdateCycleFor updateCheck: SPUUpdateCheck,
+                             error: Error?) {
+        let code = error.map { ($0 as NSError).code }
+        Task { @MainActor in
+            self.outcome = Self.outcome(afterCycleFrom: self.outcome, errorCode: code)
+        }
     }
 
     nonisolated func updater(_ updater: SPUUpdater, didAbortWithError error: Error) {

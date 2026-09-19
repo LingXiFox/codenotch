@@ -26,7 +26,7 @@ pub struct TraySlot {
 pub struct Config {
     #[serde(default = "default_port")]
     pub port: u16,
-    /// "auto" | "zh" | "en" | "ja" | "ko" | "ru" | "uk"
+    /// "auto" | "zh" | "zh-Hant" | "en" | "ja" | "ko" | "ru" | "uk"
     #[serde(default = "default_lang")]
     pub lang: String,
     #[serde(default)]
@@ -80,6 +80,9 @@ pub struct Config {
     /// leave the app running with no way to reach it.
     #[serde(default = "yes")]
     pub tray_visible: bool,
+    /// false = no arc above the notch to carry it by. Nothing is lost: Appearance → Edge moves it too.
+    #[serde(default = "yes")]
+    pub show_move_handle: bool,
 }
 
 fn default_notch_y() -> f64 {
@@ -158,6 +161,7 @@ impl Default for Config {
             antigravity_model: default_antigravity_model(),
             notch_visible: true,
             tray_visible: true,
+            show_move_handle: true,
         }
     }
 }

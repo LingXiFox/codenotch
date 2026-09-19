@@ -44,7 +44,13 @@ struct ProviderRing: View {
         return UsageBand.band(for: usedFraction ?? 0, watchLimit: watchLimit, criticalLimit: criticalLimit)
     }
     private var sweep: CGFloat { CGFloat(min(max(usedFraction ?? 0, 0), 1)) }
-    private var localSweep: CGFloat { CGFloat(min(max(localContextFraction ?? 1, 0), 1)) }
+    private var localSweep: CGFloat { Self.localSweep(for: localContextFraction) }
+    /// The floor is a drawing decision only — the number under the ring and in
+    /// the card stays true.
+    static func localSweep(for contextFraction: Double?) -> CGFloat {
+        guard let contextFraction else { return 1 }
+        return max(NotchLayout.localArcMinimumSweep, CGFloat(min(max(contextFraction, 0), 1)))
+    }
     private var primaryColor: Color {
         isStale ? Palette.textSecondary : band.color(accent: accentColor)
     }

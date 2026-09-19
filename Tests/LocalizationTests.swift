@@ -6,6 +6,7 @@ import XCTest
 /// that exists is served, not that every key has one.
 final class LocalizationTests: XCTestCase {
     private let zhHans = Locale(identifier: "zh-Hans")
+    private let zhHant = Locale(identifier: "zh-Hant")
     private let french = Locale(identifier: "fr")
     private let german = Locale(identifier: "de")
     private let japanese = Locale(identifier: "ja")
@@ -548,13 +549,47 @@ final class LocalizationTests: XCTestCase {
         )
     }
 
+    // MARK: - Traditional Chinese
+
+    func testCoreCopyInTraditionalChinese() {
+        XCTAssertEqual(
+            ElapsedCopy.text(since: now.addingTimeInterval(-5), now: now, locale: zhHant),
+            "剛剛"
+        )
+        XCTAssertEqual(
+            ElapsedCopy.text(since: now.addingTimeInterval(-6 * 60), now: now, locale: zhHant),
+            "6 分鐘"
+        )
+        XCTAssertEqual(
+            ResetCopy.text(for: resetNow.addingTimeInterval(51 * 60), now: resetNow, locale: zhHant),
+            "51 分鐘後重置"
+        )
+        XCTAssertEqual(
+            percentWindow(0.12).summary(locale: zhHant),
+            "12% 已用 · 88% 剩餘"
+        )
+        XCTAssertEqual(L10n.t("Always show", locale: zhHant), "始終顯示")
+        XCTAssertEqual(L10n.t("Settings…", locale: zhHant), "設定…")
+        XCTAssertEqual(
+            L10n.t("Sign in to \("Perplexity")", locale: zhHant),
+            "登入 Perplexity"
+        )
+    }
+
+    func testTraditionalChineseThresholdAlertKeepsArgumentOrder() {
+        XCTAssertEqual(
+            L10n.t("\(80)% of its \("weekly") limit used.", locale: zhHant),
+            "已用其 weekly 額度的 80%。"
+        )
+    }
+
     /// Every language the picker offers must resolve to a locale the catalog
     /// is filed under — a region-qualified or unshipped identifier silently
     /// serves another language instead.
     func testEveryOfferedLanguageResolves() {
         XCTAssertEqual(
             AppLanguage.allCases.map(\.rawValue),
-            ["system", "en", "fr", "de", "ja", "pt-BR", "ru", "zh-Hans", "uk"]
+            ["system", "en", "fr", "de", "ja", "pt-BR", "ru", "zh-Hans", "zh-Hant", "uk"]
         )
         XCTAssertNil(AppLanguage.system.locale)
         for language in AppLanguage.allCases where language != .system {

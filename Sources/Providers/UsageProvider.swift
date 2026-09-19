@@ -97,6 +97,13 @@ enum UsageProviderError: Error {
     case timedOut
     /// The endpoint answered, but not with anything we understand.
     case badResponse(status: Int)
+    /// The endpoint answered with its own named business failure — QianwenAI's
+    /// gateway reports these under HTTP 200, `Bad Request` among them. The name
+    /// is the useful half of the answer, and `badResponse(status:)` cannot carry
+    /// it: every one of these used to be reported as "HTTP 0", which named
+    /// nothing and sent nobody anywhere. A signed-out session is a name too, and
+    /// that one goes to `needsAuth` instead.
+    case apiError(String)
     /// Asked to slow down. Carries the server's own retry hint when it gave one.
     case rateLimited(retryAfter: TimeInterval)
     /// The account is readable, but there is genuinely no quota being counted —

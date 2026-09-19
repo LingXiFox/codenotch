@@ -34,6 +34,10 @@ enum ProviderGlyph: String, Codable, Equatable {
     case ollama
     case ollamaLocal = "ollama-local"
     case lmstudio
+    /// The QianwenAI platform's own console mark, which is a different emblem
+    /// from the local Qwen model brand in `.qwen` — a ring wearing this one is
+    /// the platform account, not a model.
+    case qianwenAI = "qianwenai"
 
     /// If an asset with this name is in the bundle it wins over the traced
     /// outline — drop a PDF/SVG export from Figma in and it is picked up.
@@ -69,6 +73,11 @@ enum ProviderGlyph: String, Codable, Equatable {
         case .third:  return 1.0
         case .ollamaLocal: return 0.98
         case .lmstudio: return 0.96
+        // The one value here measured off a render of the asset file rather
+        // than of the app: this mark's ink fills 0.996 of its box, rasterised
+        // with `rsvg-convert -w 512`. Claude's outline fills 0.997 at 0.97, so
+        // the same scale brings this ink to the same extent.
+        case .qianwenAI: return 0.97
         case .devin, .qwen, .gemma, .meta, .deepseek, .mistral: return 1.0
         }
     }
@@ -81,14 +90,18 @@ enum ProviderGlyph: String, Codable, Equatable {
         case .cursor: return GlyphOutline.cursor
         case .antigravity: return GlyphOutline.antigravity
         case .geminiSpark: return GlyphOutline.gemini
+        // Fallbacks only: glyph-glm, glyph-opencode, glyph-commandcode and
+        // glyph-kimi in the asset catalogue are drawn instead.
         case .glm:    return GlyphOutline.glm
-        case .devin, .qwen, .gemma, .meta, .deepseek, .mistral, .lmstudio: return []
+        case .devin, .qwen, .gemma, .meta, .deepseek, .mistral, .lmstudio,
+             .qianwenAI: return []
         case .grok:   return GlyphOutline.grok
         case .opencode: return GlyphOutline.opencode
         case .commandcode: return GlyphOutline.commandcode
         case .copilot: return GlyphOutline.copilot
         case .kimi:   return GlyphOutline.kimi
         case .kiro:   return GlyphOutline.kiro
+        // A fallback only: glyph-minimax in the asset catalogue is drawn instead.
         case .minimax: return GlyphOutline.minimax
         case .ollama, .ollamaLocal: return GlyphOutline.ollama
         }

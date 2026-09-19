@@ -127,4 +127,10 @@ final class CatalogFormatTests: XCTestCase {
         XCTAssertTrue(body.contains("99"), body)
         XCTAssertTrue(body.contains("weekly"), body)
     }
+
+    func testTheEightyPercentAlertBodyFormatsInTraditionalChinese() {
+        let body = L10n.t("\(99)% of its \("weekly") limit used.", locale: Locale(identifier: "zh-Hant"))
+        XCTAssertTrue(body.contains("99"), body)
+        XCTAssertTrue(body.contains("weekly"), body)
+    }
 }

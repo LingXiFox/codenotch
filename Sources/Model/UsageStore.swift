@@ -759,6 +759,10 @@ final class UsageStore: ObservableObject {
             return .unsupported(why)
         case UsageProviderError.badResponse(let code):
             return .error("HTTP \(code)")
+        case UsageProviderError.apiError(let name):
+            // The server's own words. It is the only part of such a failure
+            // that says what went wrong — the status is 200 either way.
+            return .error(name)
         default:
             return .error((error as NSError).localizedDescription)
         }

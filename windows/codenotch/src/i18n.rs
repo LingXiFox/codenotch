@@ -8,24 +8,47 @@ pub fn resolve_auto() -> &'static str {
         let n = GetUserDefaultLocaleName(&mut buf);
         if n > 0 {
             let name = String::from_utf16_lossy(&buf[..(n as usize - 1)]).to_lowercase();
-            if name.starts_with("zh") {
-                return "zh";
-            }
-            if name.starts_with("ja") {
-                return "ja";
-            }
-            if name.starts_with("ko") {
-                return "ko";
-            }
-            if name.starts_with("ru") {
-                return "ru";
-            }
-            if name.starts_with("uk") {
-                return "uk";
+            if let Some(lang) = language_from_windows_locale(&name) {
+                return lang;
             }
         }
     }
     "en"
+}
+
+/// Map a Windows locale name onto a language code this crate ships.
+///
+/// Traditional regions must be matched before the leftover `zh*` fallback —
+/// `starts_with("zh")` used to send zh-TW/zh-HK to Simplified.
+fn language_from_windows_locale(name: &str) -> Option<&'static str> {
+    let name = name.to_ascii_lowercase();
+    if name.starts_with("zh-tw")
+        || name.starts_with("zh-hant")
+        || name.starts_with("zh-hk")
+        || name.starts_with("zh-mo")
+    {
+        return Some("zh-Hant");
+    }
+    if name.starts_with("zh-cn")
+        || name.starts_with("zh-hans")
+        || name.starts_with("zh-sg")
+        || name.starts_with("zh")
+    {
+        return Some("zh");
+    }
+    if name.starts_with("ja") {
+        return Some("ja");
+    }
+    if name.starts_with("ko") {
+        return Some("ko");
+    }
+    if name.starts_with("ru") {
+        return Some("ru");
+    }
+    if name.starts_with("uk") {
+        return Some("uk");
+    }
+    None
 }
 
 /// Whether the region settings write times on a 24-hour clock. The page can't tell: WebView2's
@@ -79,17 +102,27 @@ pub fn tr(lang: &str, key: &str) -> &'static str {
     let l = if lang == "auto" { resolve_auto() } else { lang };
     match (l, key) {
         ("zh", "install") => "安装 Claude Code 钩子",
+        ("zh-Hant", "install") => "安裝 Claude Code 鉤子",
         ("zh", "uninstall") => "卸载钩子",
+        ("zh-Hant", "uninstall") => "解除安裝鉤子",
         ("zh", "language") => "语言",
+        ("zh-Hant", "language") => "語言",
         ("zh", "lang_auto") => "跟随系统",
+        ("zh-Hant", "lang_auto") => "跟隨系統",
         ("zh", "reset_pos") => "重置悬浮条位置",
+        ("zh-Hant", "reset_pos") => "重置懸浮列位置",
         ("zh", "quit") => "退出",
+        ("zh-Hant", "quit") => "結束",
         ("zh", "hooks_missing") => "钩子未安装：右键托盘图标 → 安装 Claude Code 钩子（桌面版无需，已自动兜底）",
+        ("zh-Hant", "hooks_missing") => "鉤子未安裝：在系統匣圖示按右鍵 → 安裝 Claude Code 鉤子（桌面版無需，已自動後援）",
         ("zh", "autostart") => "开机自启（静默待命）",
+        ("zh-Hant", "autostart") => "開機自動啟動（靜默待命）",
         ("ja", "autostart") => "Windows起動時に自動開始",
         ("ko", "autostart") => "Windows 시작 시 자동 실행",
         ("zh", "refresh_all") => "全部刷新",
+        ("zh-Hant", "refresh_all") => "全部重新整理",
         ("zh", "open_data") => "打开数据文件夹（日志 / 图标）",
+        ("zh-Hant", "open_data") => "開啟資料資料夾（日誌 / 圖示）",
         ("ja", "open_data") => "データフォルダを開く（ログ / アイコン）",
         ("ko", "open_data") => "데이터 폴더 열기 (로그 / 아이콘)",
         ("ru", "open_data") => "Открыть папку данных (журналы / значки)",
@@ -140,6 +173,7 @@ pub fn tr(lang: &str, key: &str) -> &'static str {
         (_, "refresh_all") => "Refresh all",
 
         ("zh", "waiting") => "正在等待首次读数…",
+        ("zh-Hant", "waiting") => "正在等待首次讀數…",
         ("ja", "waiting") => "最初の読み取りを待っています…",
         ("ko", "waiting") => "첫 번째 읽기를 기다리는 중…",
         ("ru", "waiting") => "Ожидание первых данных…",
@@ -147,23 +181,31 @@ pub fn tr(lang: &str, key: &str) -> &'static str {
         (_, "waiting") => "Waiting for the first reading…",
 
         ("zh", "quit_app") => "退出 Codenotch",
+        ("zh-Hant", "quit_app") => "結束 Codenotch",
         ("ja", "quit_app") => "Codenotch を終了",
         ("ko", "quit_app") => "Codenotch 종료",
         ("ru", "quit_app") => "Выйти из Codenotch",
         ("uk", "quit_app") => "Вийти з Codenotch",
         (_, "quit_app") => "Quit Codenotch",
         ("zh", "settings") => "设置…",
+        ("zh-Hant", "settings") => "設定…",
         ("ja", "settings") => "設定…",
         ("ko", "settings") => "설정…",
         ("ru", "settings") => "Настройки…",
         ("uk", "settings") => "Налаштування…",
         (_, "settings") => "Settings…",
-
-
-
-
-
-
+        ("zh", "refresh_now") => "立即刷新",
+        ("zh-Hant", "refresh_now") => "立即重新整理",
+        ("ja", "refresh_now") => "今すぐ更新",
+        ("ru", "refresh_now") => "Обновить сейчас",
+        ("uk", "refresh_now") => "Оновити зараз",
+        (_, "refresh_now") => "Refresh now",
+        ("zh", "open_host") => "打开 %@",
+        ("zh-Hant", "open_host") => "開啟 %@",
+        ("ja", "open_host") => "%@ を開く",
+        ("ru", "open_host") => "Открыть %@",
+        ("uk", "open_host") => "Відкрити %@",
+        (_, "open_host") => "Open %@",
         _ => "?",
     }
 }
@@ -177,6 +219,8 @@ mod tests {
         ("refresh_all", "Обновить всё"),
         ("waiting", "Ожидание первых данных…"),
         ("quit_app", "Выйти из Codenotch"),
+        ("refresh_now", "Обновить сейчас"),
+        ("open_host", "Открыть %@"),
         ("quit", "Выйти"),
         ("install", "Установить хуки Claude Code"),
         ("uninstall", "Удалить хуки"),
@@ -214,6 +258,8 @@ mod tests {
         ("waiting", "Очікування першого показника…"),
         ("quit_app", "Вийти з Codenotch"),
         ("settings", "Налаштування…"),
+        ("refresh_now", "Оновити зараз"),
+        ("open_host", "Відкрити %@"),
     ];
 
     #[test]
@@ -226,6 +272,51 @@ mod tests {
             );
             assert_ne!(tr("uk", key), "?", "unknown Ukrainian key {key}");
         }
+    }
+
+    const TRADITIONAL_CHINESE_KEYS: &[(&str, &str)] = &[
+        ("settings", "設定…"),
+        ("refresh_all", "全部重新整理"),
+        ("waiting", "正在等待首次讀數…"),
+        ("quit_app", "結束 Codenotch"),
+        ("refresh_now", "立即重新整理"),
+        ("open_host", "開啟 %@"),
+        ("quit", "結束"),
+        ("install", "安裝 Claude Code 鉤子"),
+        ("uninstall", "解除安裝鉤子"),
+        ("language", "語言"),
+        ("lang_auto", "跟隨系統"),
+        ("reset_pos", "重置懸浮列位置"),
+        ("hooks_missing", "鉤子未安裝：在系統匣圖示按右鍵 → 安裝 Claude Code 鉤子（桌面版無需，已自動後援）"),
+        ("autostart", "開機自動啟動（靜默待命）"),
+        ("open_data", "開啟資料資料夾（日誌 / 圖示）"),
+    ];
+
+    #[test]
+    fn traditional_chinese_translates_every_known_key() {
+        for (key, value) in TRADITIONAL_CHINESE_KEYS {
+            assert_eq!(
+                tr("zh-Hant", key),
+                *value,
+                "missing Traditional Chinese translation for {key}"
+            );
+            assert_ne!(tr("zh-Hant", key), "?", "unknown Traditional Chinese key {key}");
+        }
+    }
+
+    #[test]
+    fn traditional_chinese_locales_resolve_apart_from_simplified() {
+        use super::language_from_windows_locale;
+        assert_eq!(language_from_windows_locale("zh-TW"), Some("zh-Hant"));
+        assert_eq!(language_from_windows_locale("zh-Hant"), Some("zh-Hant"));
+        assert_eq!(language_from_windows_locale("zh-Hant-TW"), Some("zh-Hant"));
+        assert_eq!(language_from_windows_locale("zh-HK"), Some("zh-Hant"));
+        assert_eq!(language_from_windows_locale("zh-MO"), Some("zh-Hant"));
+        assert_eq!(language_from_windows_locale("zh-CN"), Some("zh"));
+        assert_eq!(language_from_windows_locale("zh-Hans"), Some("zh"));
+        assert_eq!(language_from_windows_locale("zh-Hans-CN"), Some("zh"));
+        assert_eq!(language_from_windows_locale("zh-SG"), Some("zh"));
+        assert_eq!(language_from_windows_locale("zh"), Some("zh"));
     }
 
     #[test]

@@ -61,6 +61,50 @@ final class CatalogCoverageTests: XCTestCase {
         }
     }
 
+    func testSimplifiedChineseCoreCopyIsTranslated() throws {
+        let catalog = try loadCatalog().json
+        let expected = [
+            "just now": "刚刚",
+            "Resets in %lld min": "%lld 分钟后重置",
+            "%lld%% Used · %lld%% left": "%lld%% 已用 · %lld%% 剩余",
+            "Always show": "始终显示",
+            "Settings…": "设置…",
+            "Sign in to %@": "登录 %@",
+            "%lld%% of its %@ limit used.": "已用其 %2$@ 额度的 %1$lld%%。",
+            "Ready on %@:%d": "已在 %@:%d 就绪",
+            "Expires in %@": "%@ 后过期"
+        ]
+
+        for (key, value) in expected {
+            XCTAssertEqual(
+                catalog.strings[key]?.localizations?["zh-Hans"]?.stringUnit?.value,
+                value,
+                "missing Simplified Chinese translation for \(key)"
+            )
+        }
+    }
+
+    func testTraditionalChineseCoreCopyIsTranslated() throws {
+        let catalog = try loadCatalog().json
+        let expected = [
+            "just now": "剛剛",
+            "Resets in %lld min": "%lld 分鐘後重置",
+            "%lld%% Used · %lld%% left": "%lld%% 已用 · %lld%% 剩餘",
+            "Always show": "始終顯示",
+            "Settings…": "設定…",
+            "Sign in to %@": "登入 %@",
+            "%lld%% of its %@ limit used.": "已用其 %2$@ 額度的 %1$lld%%。"
+        ]
+
+        for (key, value) in expected {
+            XCTAssertEqual(
+                catalog.strings[key]?.localizations?["zh-Hant"]?.stringUnit?.value,
+                value,
+                "missing Traditional Chinese translation for \(key)"
+            )
+        }
+    }
+
     /// There is deliberately no "language X covers every key" test.
     ///
     /// The rule at the top of this file is that a missing translation falls

@@ -6,6 +6,7 @@ mod doctor;
 mod focus;
 mod hooks_install;
 mod i18n;
+mod notchmenu;
 mod server;
 mod state;
 mod tray;
@@ -20,6 +21,7 @@ mod glyphs;
 mod trayicon;
 mod activity;
 mod diag;
+mod dropzones;
 mod watcher;
 mod settings_window;
 
@@ -32,6 +34,9 @@ pub const NOTCH_W: f64 = 360.0;
 /// Hand-bumped build tag, written to run.log at startup so a log can always be matched to the exe that wrote it.
 pub const BUILD: &str = "r31";
 pub const NOTCH_H: f64 = 520.0; // 300 clipped the card once it held three window blocks plus the session list; 460 clipped Antigravity's two model groups once the reading was stale and an agent was working
+/// Height of the upright window. Five cells make a 504 px pill; its fillets add 38.7 px at each end
+/// and the settings orb reaches 28.5 px past the far one, so 520 cut both fillets and hid the orb.
+pub const NOTCH_UPRIGHT_H: f64 = 650.0;
 
 pub struct AppState {
     pub store: Mutex<state::Store>,
@@ -84,10 +89,13 @@ pub struct Screen {
     pub w: i32,
     pub h: i32,
     pub scale: f64,
+    /// The work area: the monitor less the taskbar and anything else docked to its edges.
+    pub work: (i32, i32, i32, i32),
 }
 
 impl Screen {
     fn of(m: &tauri::window::Monitor) -> Self {
+        let wa = m.work_area();
         Self {
             name: m.name().cloned(),
             x: m.position().x,
@@ -95,6 +103,17 @@ impl Screen {
             w: m.size().width as i32,
             h: m.size().height as i32,
             scale: m.scale_factor(),
+            work: (wa.position.x, wa.position.y, wa.size.width as i32, wa.size.height as i32),
+        }
+    }
+    /// Where the notch may sit. Falls back to the whole monitor if the platform reports no usable
+    /// work area, which would otherwise pin the notch to (0, 0) with no span to move along.
+    fn area(&self) -> (i32, i32, i32, i32) {
+        let (x, y, w, h) = self.work;
+        if w > 0 && h > 0 {
+            (x, y, w, h)
+        } else {
+            (self.x, self.y, self.w, self.h)
         }
     }
     fn contains(&self, x: i32, y: i32) -> bool {
@@ -141,29 +160,52 @@ fn target_screen(app: &AppHandle) -> Option<Screen> {
 
 /// The window's top-left corner for an edge, a position ratio along it and a measured window size.
 /// `ratio` is the *centre* of the notch along the edge, so 0.5 is the middle whatever the size.
+/// The work area, not the monitor: a notch on the edge the taskbar is docked to would otherwise be
+/// covered by it. The Mac places against `frame` rather than `visibleFrame` on purpose, but what it
+/// overlaps there is the menu bar, which macOS lets a notch cover; the taskbar wins the z-order
+/// among topmost windows and is a click target of its own, so it is room lost.
 fn edge_origin(s: &Screen, edge: &str, ww: i32, wh: i32, ratio: f64) -> (i32, i32) {
+    let (ax, ay, aw, ah) = s.area();
     let along = |span: i32, len: i32| -> i32 {
         let v = (span as f64 * ratio - len as f64 / 2.0).round() as i32;
         v.clamp(0, (span - len).max(0))
     };
     match edge {
-        "left" => (s.x, s.y + along(s.h, wh)),
-        "top" => (s.x + along(s.w, ww), s.y),
-        "bottom" => (s.x + along(s.w, ww), s.y + s.h - wh),
-        _ => (s.x + s.w - ww, s.y + along(s.h, wh)),
+        "left" => (ax, ay + along(ah, wh)),
+        "top" => (ax + along(aw, ww), ay),
+        "bottom" => (ax + along(aw, ww), ay + ah - wh),
+        _ => (ax + aw - ww, ay + along(ah, wh)),
     }
 }
+
+/// How far the taskbar (or anything else outside the work area) covers each side of a window at
+/// (x, y, ww, wh), in physical pixels: top, right, bottom, left. `edge_origin` keeps the pill itself
+/// out of the taskbar, so what is left here is the window's other three sides — an upright notch is
+/// taller than the work area is on a short screen — and the hover card is what the page moves.
+fn work_insets(s: &Screen, x: i32, y: i32, ww: i32, wh: i32) -> [i32; 4] {
+    let (wx, wy, waw, wah) = s.work;
+    [
+        (wy - y).clamp(0, wh),
+        ((x + ww) - (wx + waw)).clamp(0, ww),
+        ((y + wh) - (wy + wah)).clamp(0, wh),
+        (wx - x).clamp(0, ww),
+    ]
+}
+
+/// The last insets pushed to the page, in its CSS px, for a page that asks before it was listening.
+static NOTCH_INSETS: Mutex<[f64; 4]> = Mutex::new([0.0; 4]);
 
 /// Pins the notch to the configured edge of the configured monitor.
 /// The notch window's logical size for an edge.
 ///
-/// Upright on the left and right, the pill is a column and 360 wide is plenty. Lying flat on the
-/// top and bottom it is a row: five 56 px rings, their gaps, the padding and both fillets already
-/// come to about 424 px, so a 360 px window clipped the pill once a fifth provider was on. The
-/// flat window keeps the full height too, for the hover card that opens below or above the pill.
+/// Upright on the left and right, the pill is a column and 360 wide is plenty; its length is what
+/// needs room, hence `NOTCH_UPRIGHT_H`. Lying flat on the top and bottom it is a row: five 56 px
+/// rings, their gaps, the padding, both fillets and the settings orb come to about 506 px, so a
+/// 360 px window clipped the pill once a fifth provider was on. The flat window keeps the full
+/// height too, for the hover card that opens below or above the pill.
 pub fn notch_window_size(edge: &str) -> (f64, f64) {
     if config::edge_is_vertical(edge) {
-        (NOTCH_W, NOTCH_H)
+        (NOTCH_W, NOTCH_UPRIGHT_H)
     } else {
         (NOTCH_H, NOTCH_H)
     }
@@ -189,7 +231,11 @@ pub fn place_notch(app: &AppHandle) {
             config::edge_or_right(&c.notch_edge)
         };
         let (width, height) = notch_window_size(&edge);
-        let target = tauri::PhysicalSize::new((width * ms * size).round() as u32, (height * ms * size).round() as u32);
+        // Never taller or wider than the screen: Large on a small, highly scaled display can ask for more
+        let target = tauri::PhysicalSize::new(
+            ((width * ms * size).round() as u32).min(mon.w.max(1) as u32),
+            ((height * ms * size).round() as u32).min(mon.h.max(1) as u32),
+        );
         let _ = w.set_size(target);
         zoom_notch(&w, ms, size);
         // Position from the window's measured physical size — deriving it from the scale factor
@@ -206,40 +252,85 @@ pub fn place_notch(app: &AppHandle) {
         };
         let (x, y) = edge_origin(&mon, &edge, ww, wh, ratio);
         let _ = w.set_position(tauri::PhysicalPosition::new(x, y));
+        let mut placed = (x, y, ww, wh);
         if w.outer_size().map(|s| s.width != target.width).unwrap_or(false) {
             let _ = w.set_size(target);
             let (x, y) = edge_origin(&mon, &edge, target.width as i32, target.height as i32, ratio);
             let _ = w.set_position(tauri::PhysicalPosition::new(x, y));
+            placed = (x, y, target.width as i32, target.height as i32);
         }
         // The page mirrors itself for the edge it is on; it cannot know that on its own.
         let _ = w.emit("notch_edge", &edge);
-        // Placement log line: the first thing to check when the notch is not visible
-        let log = config::config_path().with_file_name("run.log");
-        let _ = std::fs::write(
-            log,
-            format!(
-                "notch placed build={BUILD}: edge={edge} pos=({x},{y}) size=({ww}x{wh}) inner={:?} win_scale={scale} mon_scale={ms} notch_size={size} monitor={:?}=({},{} {}x{})\n",
-                w.inner_size().map(|s| (s.width, s.height)).unwrap_or((0, 0)),
-                mon.name,
-                mon.x,
-                mon.y,
-                mon.w,
-                mon.h
-            ),
-        );
+        // Nor can it see the taskbar: a card opened near the bottom of a side edge slid under it.
+        // The page is `size` × the monitor scale smaller than the window in CSS px.
+        let css = (ms * size).max(0.01);
+        let insets = work_insets(&mon, placed.0, placed.1, placed.2, placed.3).map(|v| v as f64 / css);
+        *NOTCH_INSETS.lock().unwrap() = insets;
+        let _ = w.emit("notch_insets", insets);
+        // Placement log line: the first thing to check when the notch is not visible. Appended, not
+        // overwritten (#240) — place_notch runs after every drag as well as at startup, and a
+        // truncating write wiped the rest of the session's diagnostic trail on every drag.
+        applog(&format!(
+            "notch placed build={BUILD}: edge={edge} pos=({x},{y}) size=({ww}x{wh}) inner={:?} win_scale={scale} mon_scale={ms} notch_size={size} monitor={:?}=({},{} {}x{}) work={:?} card_insets_css={insets:?}",
+            w.inner_size().map(|s| (s.width, s.height)).unwrap_or((0, 0)),
+            mon.name,
+            mon.x,
+            mon.y,
+            mon.w,
+            mon.h,
+            mon.work
+        ));
     }
 }
 
-/// Older entry point name still used by tray.rs. Recentre also brings the notch back to the primary
-/// monitor's right edge: a notch lost on a screen that has since been unplugged is exactly what this
-/// button is for, so the monitor choice has to go with the position.
+/// How often the work area is re-read. It only changes by hand — the taskbar moved to another edge,
+/// resized, or switched to auto-hide — so a second late is not noticeable.
+const WORK_AREA_POLL_MS: u64 = 1000;
+
+/// Puts the notch back on its edge when the work area moves under it.
+///
+/// Nothing hands us `WM_SETTINGCHANGE`, and the notch is placed against the work area now, so
+/// moving the taskbar to another edge would otherwise leave the notch a taskbar's width from the
+/// edge it is pinned to, floating in the gap the old taskbar left. Polled rather than hooked,
+/// because hooking it means subclassing a window we do not own to catch something that happens
+/// once in a session.
+fn start_work_area_watch(app: AppHandle) {
+    std::thread::spawn(move || {
+        let mut last = target_screen(&app).map(|s| s.work);
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(WORK_AREA_POLL_MS));
+            // Mid-drag the notch is following the pointer, and placing it again would fight that.
+            if DRAGGING.load(std::sync::atomic::Ordering::SeqCst) {
+                continue;
+            }
+            let now = target_screen(&app).map(|s| s.work);
+            if now == last {
+                continue;
+            }
+            applog(&format!("work area changed: {last:?} -> {now:?}"));
+            last = now;
+            place_notch(&app);
+        }
+    });
+}
+
+/// Older entry point name still used by tray.rs. Recentre puts the notch in the middle of the edge it
+/// is on, and only sends it home to the primary monitor's right edge when the screen it was on is
+/// gone — which is the case the button exists for, and the one where its own edge means nothing.
 pub fn reset_bar(app: &AppHandle) {
+    let stranded = {
+        let st = app.state::<AppState>();
+        let want = st.cfg.lock().unwrap().notch_monitor.clone();
+        want.is_some_and(|name| !screens(app).iter().any(|s| s.name.as_deref() == Some(name.as_str())))
+    };
     {
         let st = app.state::<AppState>();
         let mut c = st.cfg.lock().unwrap();
         c.notch_y = 0.5;
-        c.notch_edge = "right".into();
-        c.notch_monitor = None;
+        if stranded {
+            c.notch_edge = "right".into();
+            c.notch_monitor = None;
+        }
         config::save(&c);
     }
     place_notch(app);
@@ -260,6 +351,92 @@ fn left_button_down() -> bool {
 #[cfg(not(windows))]
 fn left_button_down() -> bool {
     false
+}
+
+/// Which edge a point belongs to: the screen split into four triangles about its centre, as on the
+/// Mac. Nearest-edge rather than hit testing the zones, which are thin — landing inside a 70 px strip
+/// would be threading a needle.
+pub(crate) fn edge_at(x: f64, y: f64, w: f64, h: f64) -> &'static str {
+    let (left, right, top, bottom) = (x, w - x, y, h - y);
+    let nearest = left.min(right).min(top).min(bottom);
+    if nearest == right {
+        "right"
+    } else if nearest == left {
+        "left"
+    } else if nearest == top {
+        "top"
+    } else {
+        "bottom"
+    }
+}
+
+/// Carrying the notch by its move handle: the zones go up, the pointer picks one, and releasing
+/// hands it over. The notch itself stays where it is until then — what is being chosen is a place on
+/// the screen, not a distance moved, so nothing follows the pointer.
+///
+/// `depth` and `length` are the pill's own measurements standing upright, in the notch page's CSS px.
+#[tauri::command]
+fn begin_move(app: AppHandle, depth: f64, length: f64) {
+    if DRAGGING.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
+    std::thread::spawn(move || {
+        let done = |app: &AppHandle| {
+            dropzones::hide(app);
+            DRAGGING.store(false, std::sync::atomic::Ordering::SeqCst);
+            let _ = app.emit("move_end", ());
+        };
+        let Some(mon) = target_screen(&app) else {
+            done(&app);
+            return;
+        };
+        let from = {
+            let st = app.state::<AppState>();
+            let c = st.cfg.lock().unwrap();
+            config::edge_or_right(&c.notch_edge)
+        };
+        // The overlay is at the monitor's own scale; the notch page is that scale times its size
+        let size = ui_scale(&app);
+        // Every figure here is the work area's, to match the overlay window and the notch itself:
+        // the zone drawn on the taskbar's edge has to sit where the notch will, and the edge the
+        // pointer picks has to be read against the same rectangle the zones are drawn in.
+        let (ax, ay, aw, ah) = mon.area();
+        let mut zones = dropzones::Zones {
+            w: aw as f64 / mon.scale,
+            h: ah as f64 / mon.scale,
+            depth: depth * size,
+            length: length * size,
+            target: from.clone(),
+        };
+        dropzones::show(&app, &mon, &zones);
+        let mut target = from.clone();
+        while left_button_down() {
+            if let Ok(cur) = app.cursor_position() {
+                let next = edge_at(cur.x - ax as f64, cur.y - ay as f64, aw as f64, ah as f64);
+                if next != target {
+                    target = next.to_string();
+                    zones.target = target.clone();
+                    dropzones::retarget(&app, &zones);
+                    let _ = app.emit("move_target", &target);
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(16));
+        }
+        applog(&format!("notch carry: {from} -> {target}"));
+        if target != from {
+            {
+                let st = app.state::<AppState>();
+                let mut c = st.cfg.lock().unwrap();
+                c.notch_edge = target.clone();
+                // Centred, because the zone that was shown is centred: it lands where it was offered,
+                // not at whatever fraction along it happened to sit on the edge it came from
+                c.notch_y = 0.5;
+                config::save(&c);
+            }
+            place_notch(&app);
+        }
+        done(&app);
+    });
 }
 
 #[tauri::command]
@@ -322,10 +499,13 @@ fn drag_begin(app: AppHandle) {
                 ("bottom", (mon.y + mon.h - cy).max(0)),
             ];
             let edge = d.iter().min_by_key(|(_, v)| *v).map(|(e, _)| *e).unwrap_or("right");
+            // Measured against the work area, because that is the span `edge_origin` reads the ratio
+            // back against: on the monitor's, a drop next to the taskbar landed short of the pointer.
+            let (ax, ay, aw, ah) = mon.area();
             let ratio = if config::edge_is_vertical(edge) {
-                ((cy - mon.y) as f64 / mon.h.max(1) as f64).clamp(0.0, 1.0)
+                ((cy - ay) as f64 / ah.max(1) as f64).clamp(0.0, 1.0)
             } else {
-                ((cx - mon.x) as f64 / mon.w.max(1) as f64).clamp(0.0, 1.0)
+                ((cx - ax) as f64 / aw.max(1) as f64).clamp(0.0, 1.0)
             };
             {
                 let st = app.state::<AppState>();
@@ -380,18 +560,37 @@ fn get_usage(state: tauri::State<AppState>) -> usage::UsageSnapshot {
     state.usage.lock().unwrap().clone()
 }
 
-#[tauri::command]
-fn refresh_usage(app: AppHandle) {
-    {
-        let st = app.state::<AppState>();
-        let mut u = st.usage.lock().unwrap();
-        u.backoff_until = 0;
+/// Asks one provider to read again, and says whether a reading is on its way. Claude's rate-limit
+/// wait stands, as on the Mac: asking early spends a request and can double the wait.
+pub(crate) fn refresh_provider(app: &AppHandle, provider: &str) -> bool {
+    match provider {
+        "claude" => {
+            if app.state::<AppState>().usage.lock().unwrap().backoff_until > now_ms() {
+                return false;
+            }
+            usage::request_refresh();
+        }
+        "codex" => codex::request_refresh(),
+        "cursor" => cursor::request_refresh(),
+        "grok" => grok::request_refresh(),
+        "gemini" => antigravity::request_refresh(),
+        _ => return false,
     }
-    usage::request_refresh();
-    codex::request_refresh();
-    cursor::request_refresh();
-    grok::request_refresh();
-    antigravity::request_refresh();
+    true
+}
+
+pub(crate) fn refresh_all(app: &AppHandle) {
+    for provider in TRAY_PROVIDER_IDS {
+        refresh_provider(app, provider);
+    }
+    let a = app.clone();
+    std::thread::spawn(move || reload_glyphs(&a));
+}
+
+/// A click on a ring refetches that provider, as on the Mac.
+#[tauri::command]
+fn refresh_ring(app: AppHandle, provider: String) -> bool {
+    refresh_provider(&app, &provider)
 }
 
 #[tauri::command]
@@ -446,16 +645,20 @@ fn get_codex(state: tauri::State<AppState>) -> usage::UsageSnapshot {
     state.codex.lock().unwrap().clone()
 }
 
-/// A click on a cell opens that provider's usage page
-#[tauri::command]
-fn open_provider_page(provider: String) {
-    let url = match provider.as_str() {
-        "codex" => "https://chatgpt.com/#settings/Account",
-        "cursor" => "https://cursor.com/dashboard",
-        "grok" => "https://grok.com/?_s=usage",
-        "gemini" => "https://antigravity.google",
-        _ => "https://claude.ai/settings/usage",
-    };
+/// A provider's usage page, and the host the notch menu names it by.
+pub(crate) fn provider_page(provider: &str) -> Option<(&'static str, &'static str)> {
+    Some(match provider {
+        "claude" => ("https://claude.ai/settings/usage", "claude.ai"),
+        "codex" => ("https://chatgpt.com/#settings/Account", "chatgpt.com"),
+        "cursor" => ("https://cursor.com/dashboard", "cursor.com"),
+        "grok" => ("https://grok.com/?_s=usage", "grok.com"),
+        "gemini" => ("https://antigravity.google", "antigravity.google"),
+        _ => return None,
+    })
+}
+
+pub(crate) fn open_provider_page(provider: &str) {
+    let Some((url, _)) = provider_page(provider) else { return };
     let mut cmd = std::process::Command::new("cmd");
     cmd.args(["/C", "start", "", url]);
     #[cfg(windows)]
@@ -521,10 +724,21 @@ fn zoom_notch(w: &tauri::WebviewWindow, monitor_scale: f64, size: f64) {
     }
 }
 
+/// run.log never grows past this. The placement line used to rewrite the file on every drag,
+/// which was the only thing that ever emptied it; appended instead, it needs a bound of its own.
+const RUN_LOG_MAX_BYTES: u64 = 1024 * 1024;
+
 pub fn applog(line: &str) {
     use std::io::Write;
     let log = config::config_path().with_file_name("run.log");
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(log) {
+    // Past the cap the log starts again rather than growing for as long as the app runs.
+    let full = std::fs::metadata(&log).map(|m| m.len() > RUN_LOG_MAX_BYTES).unwrap_or(false);
+    let opened = if full {
+        std::fs::File::create(&log)
+    } else {
+        std::fs::OpenOptions::new().create(true).append(true).open(&log)
+    };
+    if let Ok(mut f) = opened {
         let _ = writeln!(f, "{line}");
     }
 }
@@ -676,18 +890,6 @@ fn start_pointer_watchdog(app: AppHandle) {
 #[tauri::command]
 fn log_js(msg: String) {
     applog(&format!("js: {}", msg.chars().take(600).collect::<String>()));
-}
-
-#[tauri::command]
-fn open_usage_page() {
-    let mut cmd = std::process::Command::new("cmd");
-    cmd.args(["/C", "start", "", "https://claude.ai/settings/usage"]);
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
-    }
-    let _ = cmd.spawn();
 }
 
 #[tauri::command]
@@ -1069,6 +1271,12 @@ fn reset_notch_position(app: AppHandle) {
     reset_bar(&app);
 }
 
+/// How much of the notch window the taskbar covers, in the page's CSS px: top, right, bottom, left.
+#[tauri::command]
+fn get_notch_insets() -> [f64; 4] {
+    *NOTCH_INSETS.lock().unwrap()
+}
+
 /// Which screen edge the notch is pinned to.
 #[tauri::command]
 fn get_notch_edge(app: AppHandle) -> String {
@@ -1090,6 +1298,25 @@ fn set_notch_edge(app: AppHandle, edge: String) -> String {
     };
     place_notch(&app);
     value
+}
+
+#[tauri::command]
+fn get_move_handle(app: AppHandle) -> bool {
+    let st = app.state::<AppState>();
+    let c = st.cfg.lock().unwrap();
+    c.show_move_handle
+}
+
+#[tauri::command]
+fn set_move_handle(app: AppHandle, on: bool) -> bool {
+    {
+        let st = app.state::<AppState>();
+        let mut c = st.cfg.lock().unwrap();
+        c.show_move_handle = on;
+        config::save(&c);
+    }
+    let _ = app.emit("move_handle", on);
+    on
 }
 
 /// One attached monitor, as Settings lists it.
@@ -1319,9 +1546,8 @@ fn main() {
             get_activity,
             open_data_dir,
             drag_begin,
-            open_provider_page,
-            refresh_usage,
-            open_usage_page,
+            refresh_ring,
+            notchmenu::show_notch_menu,
             set_hot,
             report_dpr,
             log_js,
@@ -1348,10 +1574,15 @@ fn main() {
             set_hooks_installed,
             reset_notch_position,
             get_notch_edge,
+            get_notch_insets,
             set_notch_edge,
             get_monitors,
             set_notch_monitor,
             open_settings,
+            begin_move,
+            get_move_handle,
+            set_move_handle,
+            dropzones::get_zones,
             settings_window::get_system_look,
             settings_window::quit_app,
             settings_window::open_author_page
@@ -1363,6 +1594,7 @@ fn main() {
                 let _ = w.show();
             }
             tray::setup(&handle)?;
+            notchmenu::setup(&handle);
             start_menu_updater(handle.clone());
             // Honours the saved switches: a notch hidden last time stays hidden.
             apply_visibility(&handle);
@@ -1378,6 +1610,7 @@ fn main() {
             let gh = handle.clone();
             std::thread::spawn(move || reload_glyphs(&gh));
             start_pointer_watchdog(handle.clone());
+            start_work_area_watch(handle.clone());
             // Seen-clears-it scan
             let acker = handle.clone();
             std::thread::spawn(move || {
@@ -1416,20 +1649,95 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{cursor_in_hot, notch_window_size, ring_window, HOT_PAD, NOTCH_H, NOTCH_W};
+    use super::{
+        cursor_in_hot, notch_window_size, provider_page, ring_window, work_insets, Screen, HOT_PAD,
+        NOTCH_H, NOTCH_W, TRAY_PROVIDER_IDS,
+    };
     use crate::usage::LimitWindow;
+
+    /// A provider added without a page of its own used to fall through to Claude's
+    #[test]
+    fn every_provider_opens_its_own_page() {
+        let mut hosts: Vec<&str> = TRAY_PROVIDER_IDS
+            .iter()
+            .map(|id| provider_page(id).unwrap_or_else(|| panic!("{id} has no usage page")).1)
+            .collect();
+        hosts.sort();
+        hosts.dedup();
+        assert_eq!(hosts.len(), TRAY_PROVIDER_IDS.len());
+        assert_eq!(provider_page("nobody"), None);
+    }
+
+    #[test]
+    fn the_taskbar_is_measured_against_the_window() {
+        // 3200 × 2000 with a 72 px taskbar along the bottom
+        let s = Screen { name: None, x: 0, y: 0, w: 3200, h: 2000, scale: 1.5, work: (0, 0, 3200, 1928) };
+        assert_eq!(work_insets(&s, 2768, 1376, 432, 624), [0, 0, 72, 0], "right edge, at the bottom");
+        assert_eq!(work_insets(&s, 2768, 512, 432, 624), [0, 0, 0, 0], "right edge, clear of it");
+        assert_eq!(work_insets(&s, 1000, 1928, 624, 624).map(|v| v <= 624), [true; 4], "never more than the window");
+        // A taskbar on the left
+        let s = Screen { work: (72, 0, 3128, 2000), ..s };
+        assert_eq!(work_insets(&s, 0, 700, 432, 624), [0, 0, 0, 72]);
+    }
+
+    /// A notch on the edge the taskbar is docked to used to sit under it.
+    #[test]
+    fn the_notch_is_placed_inside_the_work_area() {
+        // 3200 × 2000 with a 72 px taskbar along the bottom
+        let s = Screen { name: None, x: 0, y: 0, w: 3200, h: 2000, scale: 1.5, work: (0, 0, 3200, 1928) };
+        for edge in ["left", "right", "top", "bottom"] {
+            let (ww, wh) = if crate::config::edge_is_vertical(edge) { (432, 624) } else { (624, 624) };
+            let (x, y) = super::edge_origin(&s, edge, ww, wh, 0.5);
+            assert!(y + wh <= 1928, "{edge}: ({x},{y}) {ww}x{wh} reaches into the taskbar");
+            assert_eq!(work_insets(&s, x, y, ww, wh), [0; 4], "{edge}: nothing covers it");
+        }
+        // A taskbar on the left moves the left edge in, and leaves the right one where it was
+        let s = Screen { work: (72, 0, 3128, 2000), ..s };
+        assert_eq!(super::edge_origin(&s, "left", 432, 624, 0.5).0, 72);
+        assert_eq!(super::edge_origin(&s, "right", 432, 624, 0.5).0, 3200 - 432);
+        // Nothing usable reported: the whole monitor, as before
+        let s = Screen { work: (0, 0, 0, 0), ..s };
+        assert_eq!(super::edge_origin(&s, "bottom", 624, 624, 1.0), (3200 - 624, 2000 - 624));
+    }
 
     #[test]
     fn a_flat_notch_is_wide_enough_for_five_rings() {
-        // 5 × 56 px rings + 4 × 14 px gaps + 36 px padding + 2 × 26 px fillets
-        let pill = 5.0 * 56.0 + 4.0 * 14.0 + 36.0 + 2.0 * 26.0;
+        // 5 × 56 px rings + 4 × 14 px gaps + 36 px padding + 2 × 38.7 px fillets + the orb's 28.5 px reach
+        let pill = 5.0 * 56.0 + 4.0 * 14.0 + 36.0 + 2.0 * (38.7 + 28.5);
         for edge in ["top", "bottom"] {
             let (w, h) = notch_window_size(edge);
             assert!(w >= pill, "{edge}: {w} px cannot hold a {pill} px pill");
             assert_eq!(h, NOTCH_H, "{edge}: the hover card still needs the full height");
         }
         for edge in ["left", "right"] {
-            assert_eq!(notch_window_size(edge), (NOTCH_W, NOTCH_H));
+            assert_eq!(notch_window_size(edge), (NOTCH_W, super::NOTCH_UPRIGHT_H));
+        }
+    }
+
+    /// Four triangles about the centre, so every point on the screen belongs to exactly one edge.
+    #[test]
+    fn a_carried_notch_lands_on_the_nearest_edge() {
+        let (w, h) = (2560.0, 1440.0);
+        assert_eq!(super::edge_at(2500.0, 700.0, w, h), "right");
+        assert_eq!(super::edge_at(20.0, 700.0, w, h), "left");
+        assert_eq!(super::edge_at(1280.0, 30.0, w, h), "top");
+        assert_eq!(super::edge_at(1280.0, 1400.0, w, h), "bottom");
+        // The corner diagonals are the boundaries: a step either side of one changes the answer
+        assert_eq!(super::edge_at(690.0, 700.0, w, h), "left");
+        assert_eq!(super::edge_at(700.0, 690.0, w, h), "top");
+        // Dragged onto another monitor: still answers the edge it left by
+        assert_eq!(super::edge_at(-200.0, 700.0, w, h), "left");
+    }
+
+    /// The pill sits in the middle of the window, so half of it, a fillet and the settings orb's reach
+    /// all have to fit between the centre and each end.
+    #[test]
+    fn an_upright_notch_has_room_for_five_rings_and_the_orb() {
+        // 5 cells (56 px ring + 6 px gap + 21 px percentage) + 4 × 14 px gaps + 36 px padding
+        let pill = 5.0 * (56.0 + 6.0 + 21.0) + 4.0 * 14.0 + 36.0;
+        for edge in ["left", "right"] {
+            let (_, h) = notch_window_size(edge);
+            assert!(h / 2.0 >= pill / 2.0 + 38.7 + 28.5, "{edge}: {h} px leaves no room for the orb");
         }
     }
 

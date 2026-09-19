@@ -1287,6 +1287,13 @@ it and then notice when the answer changes.
       Dock at the bottom is nowhere near a right-edge notch, and centring on the
       visible area would slide that notch up and down every time the Dock hid
       itself, for no reason anyone could see.
+- [x] **Superseded by `2913f68`: every edge now anchors to `frame`.** Pinning to
+      `visibleFrame` meant the notch jumped whenever the Dock or menu bar
+      appeared, which moved a position the user had chosen.
+      `NotchGeometry.panelFrame` reads `frameValue` on all four edges;
+      `visibleFrameValue` is still declared on `ScreenDescribing` but no
+      production code reads it any more. The hardware-notch merge on the top
+      edge is decided in `NotchViewModel.adopt(screen:)`.
 - [x] `SideNotchShape` is still written once, for the right edge, and
       transformed onto the others. Four hand-written variants would mean four
       copies of the corner-versus-flare clamping, and three of them would never
@@ -1697,6 +1704,27 @@ The dim is the one part of the style a headless render can see, so
 `testTheFoldedPillCarriesTheDimInTheDarkGlassStyle` probes it — at `cells: 5`,
 a panel size of its own, because the hand-me-down above would otherwise hand
 this test's dim to the folded-pill test that sorts right before it.
+
+## The local model's ring
+
+### A small context is an arc, not a dot
+
+A local-runtime cell (LM Studio, Ollama) draws its outer arc as the last
+request's prompt tokens over the loaded instance's context length, in the
+colour of the last response's speed band. When the last prompt filled only a
+few percent of the context, the trimmed arc was shorter than its own round
+caps and rendered as a single dot, which read as a status light ("green =
+fine") rather than a context reading.
+
+The fix is `NotchLayout.localArcMinimumSweep` (0.06 of the circle, ≈20px of
+body at the ring's radius plus the caps, so it is unmistakably an arc, and
+below 0.1 so the floor cannot be mistaken for a real reading);
+`ProviderRing.localSweep(for:)` applies it only when a reading exists, `nil`
+still draws the full ring as Ollama always did. The floor is a drawing
+decision only — `ringFraction`, the tooltip's "Context used" and the
+VoiceOver text keep the true number. Pinned by
+`testASmallContextStillReadsAsAnArc` and `testTheMinimumArcIsLongerThanItsCaps`
+in `NotchLayoutTests`.
 
 ## Decisions needed
 - [ ] Final app name (`Codenotch` is a placeholder)

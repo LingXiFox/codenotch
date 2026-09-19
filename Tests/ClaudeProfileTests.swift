@@ -273,4 +273,98 @@ final class ClaudeProfileTests: XCTestCase {
         XCTAssertEqual(store.snapshots.map(\.displayName), ["Claude", "Claude (work)"])
         XCTAssertEqual(store.providerSummaries.map(\.name), ["Claude", "Claude (work)"])
     }
+
+    // MARK: - Reading the account file
+
+    /// `.claude.json` is where `signedInAddress()` and `organizationID()` come
+    /// from, and on a machine with a long history it is a very large file:
+    /// Claude Code keeps per-project prompt history in it. `organizationID()` is
+    /// asked on every usage refresh, so decoding the document each time pinned a
+    /// core. A file whose modification date and size have not moved cannot have
+    /// a different answer in it, and is not read again.
+    func testTheAccountFileIsNotDecodedAgainWhileItIsUnchanged() throws {
+        let home = try accountHome(address: "one@example.com")
+        let profile = ClaudeProfile.default(home: home)
+        XCTAssertEqual(profile.signedInAddress(), "one@example.com")
+
+        // Same length, same stamp, different contents. Nothing outside a test
+        // can produce that; it is how this asks "did you read it again?"
+        // without reaching inside the cache.
+        try rewrite(home, address: "two@example.com", keepingItsStamp: true)
+
+        XCTAssertEqual(profile.signedInAddress(), "one@example.com",
+                       "the file was decoded a second time")
+    }
+
+    /// The other half, and the one that matters for correctness: switching
+    /// account in Claude Code rewrites this file, and the ring has to follow it.
+    /// Nothing is held past the version it was read from.
+    func testAChangedAccountFileIsDecodedAgain() throws {
+        let home = try accountHome(address: "one@example.com", organization: "org-one")
+        let profile = ClaudeProfile.default(home: home)
+        XCTAssertEqual(profile.signedInAddress(), "one@example.com")
+        XCTAssertEqual(profile.organizationID(), "org-one")
+
+        try rewrite(home, address: "two@example.com", organization: "org-two",
+                    modified: Date(timeIntervalSince1970: 1_800_000_000))
+
+        XCTAssertEqual(profile.signedInAddress(), "two@example.com")
+        XCTAssertEqual(profile.organizationID(), "org-two")
+    }
+
+    /// Signing out removes the file. The held answer goes with it rather than
+    /// outliving the account it described.
+    func testAnAccountFileThatGoesAwayIsNotStillAnswered() throws {
+        let home = try accountHome(address: "one@example.com")
+        let profile = ClaudeProfile.default(home: home)
+        XCTAssertEqual(profile.signedInAddress(), "one@example.com")
+
+        try FileManager.default.removeItem(at: home.appendingPathComponent(".claude.json"))
+
+        XCTAssertNil(profile.signedInAddress())
+        XCTAssertNil(profile.organizationID())
+    }
+
+    /// A home directory with `.claude/` and a `.claude.json` beside it, as the
+    /// default profile expects them.
+    private func accountHome(address: String,
+                             organization: String = "org-one") throws -> URL {
+        let home = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ClaudeProfileTests.\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: home.appendingPathComponent(".claude"),
+                                                withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: home) }
+        try rewrite(home, address: address, organization: organization,
+                    modified: Date(timeIntervalSince1970: 1_700_000_000))
+        return home
+    }
+
+    /// Writes `.claude.json` and then sets its modification date — to the one
+    /// given, or back to the one the file already had, which is what makes a
+    /// rewrite invisible to the stamp.
+    ///
+    /// Every address passed here is fifteen characters and every organization
+    /// seven, so the file is the same length whatever is in it and the stamp is
+    /// the only thing that can differ between two of them.
+    private func rewrite(_ home: URL,
+                         address: String,
+                         organization: String = "org-one",
+                         modified: Date? = nil,
+                         keepingItsStamp: Bool = false) throws {
+        let url = home.appendingPathComponent(".claude.json")
+
+        var stamp = modified
+        if keepingItsStamp {
+            let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+            stamp = attributes[.modificationDate] as? Date
+        }
+
+        let json = #"{"oauthAccount":{"emailAddress":"\#(address)","organizationUuid":"\#(organization)"}}"#
+        try Data(json.utf8).write(to: url)
+
+        if let stamp {
+            try FileManager.default.setAttributes([.modificationDate: stamp],
+                                                  ofItemAtPath: url.path)
+        }
+    }
 }

@@ -97,12 +97,9 @@ pub fn load_persisted() -> UsageSnapshot {
     std::fs::read_to_string(store_path())
         .ok()
         .and_then(|t| serde_json::from_str::<UsageSnapshot>(&t).ok())
-        .map(|mut s| {
-            if !s.windows.is_empty() {
-                s.status = "stale".into(); // an old reading after a restart is labelled as such
-            }
-            s
-        })
+        // The status it was saved with is the status it comes back with: a reading persisted a
+        // minute before a restart is a minute old, not stale, and `fetched_at` came back with it,
+        // so whatever reads this can tell the difference on its own.
         .unwrap_or_default()
 }
 
@@ -488,18 +485,21 @@ pub fn start(app: AppHandle) {
                             consecutive_429 += 1;
                             let wait = backoff_secs(consecutive_429 - 1, ra);
                             set_and_broadcast(&app, |u| {
-                                if !u.windows.is_empty() {
-                                    u.status = "stale".into();
-                                }
+                                // The status is left alone: a refused refresh says nothing about the
+                                // reading we are holding, which is exactly as old as it was a moment
+                                // ago. Marking it stale here dimmed the ring on the first 429, which
+                                // on Windows is often the first minute of a rate limit. Age decides,
+                                // as it does on the Mac (`UsageStore` keeps the previous status until
+                                // `staleAfter`), and the note below says why it is not moving.
                                 u.note = format!("Rate limited, retrying in {wait}s");
                                 u.backoff_until = now_ms() + wait * 1000;
                             });
                         }
                         Err(FetchErr::Other(msg)) => set_and_broadcast(&app, |u| {
+                            // No reading at all is an error worth showing; a reading we could not
+                            // refresh is just a reading, and its own age is what makes it stale.
                             if u.windows.is_empty() {
                                 u.status = "error".into();
-                            } else {
-                                u.status = "stale".into();
                             }
                             u.note = msg;
                         }),

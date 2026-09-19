@@ -33,6 +33,16 @@ private enum SettingsSection: String, CaseIterable, Identifiable, Hashable {
         allCases.filter { $0 != .phone || PhoneLink.isAvailable }
     }
 
+    /// Providers with a pane of their own. They are accounts too, so the
+    /// sidebar nests them under Accounts rather than listing them beside
+    /// Appearance and General, where they read as app-wide settings.
+    static let providerPanes: [SettingsSection] = [.deepseek, .ollama, .lmstudio]
+
+    /// The sidebar's own rows: everything visible that is not nested.
+    static var topLevel: [SettingsSection] {
+        visible.filter { !providerPanes.contains($0) }
+    }
+
     var id: String { rawValue }
 
     var title: String {
@@ -45,6 +55,31 @@ private enum SettingsSection: String, CaseIterable, Identifiable, Hashable {
         case .appearance:    return L10n.t("Appearance")
         case .notifications: return L10n.t("Notifications")
         case .general:       return L10n.t("General")
+        }
+    }
+
+    /// The provider's own logo, for the sections that are one provider's
+    /// settings; nil for the app's own sections, which use a symbol.
+    var logo: ProviderGlyph? {
+        switch self {
+        case .deepseek: return .deepseek
+        case .ollama:   return .ollama
+        case .lmstudio: return .lmstudio
+        default:        return nil
+        }
+    }
+
+    /// The line under the pane's title.
+    var subtitle: String {
+        switch self {
+        case .accounts:      return L10n.t("Choose which providers the notch reads.")
+        case .phone:         return L10n.t("See your usage on your phone.")
+        case .deepseek:      return L10n.t("Peak and off-peak pricing for your DeepSeek spend.")
+        case .ollama:        return L10n.t("Models running in Ollama on this Mac.")
+        case .lmstudio:      return L10n.t("Models loaded in LM Studio on this Mac.")
+        case .appearance:    return L10n.t("How the notch looks and where it sits.")
+        case .notifications: return L10n.t("What Codenotch tells you, and when.")
+        case .general:       return L10n.t("Startup, updates and everything else.")
         }
     }
 
@@ -115,21 +150,209 @@ private struct VisualEffect: NSViewRepresentable {
 
 /// A rounded-square badge behind a white symbol — the icon style System
 /// Settings' own sidebar uses, rather than a plain monochrome glyph.
-private struct SidebarIcon: View {
-    let systemName: String
-    let tint: Color
+/// The panel's surfaces. Near-black and flat: the window a shade darker than
+/// the sidebar, hairlines instead of shadows, white at stepped opacities for
+/// text rather than system greys that shift with the desktop behind them.
+private enum SettingsPalette {
+    static let window = Color(red: 0.055, green: 0.055, blue: 0.063)
+    static let sidebar = Color(red: 0.086, green: 0.086, blue: 0.094)
+    static let hairline = Color.white.opacity(0.07)
+    static let edge = Color.white.opacity(0.09)
+    static let selected = Color.white.opacity(0.10)
+    static let hovered = Color.white.opacity(0.05)
+}
 
-    /// System Settings' own badge: 20pt square, rounded to a little over a
-    /// quarter of its side, with the symbol at 12pt inside it.
+/// One row of the settings sidebar: a white symbol, the name, and for
+/// Accounts the number switched on and an arrow that folds its providers.
+private struct SettingsSidebarRow: View {
+    let section: SettingsSection
+    let isSelected: Bool
+    /// Shared by every row, so the selection pill is one shape that slides
+    /// from the old row to the new one rather than blinking between them.
+    let selectionSpace: Namespace.ID
+    var indent = false
+    var count: Int? = nil
+    var disclosure: Binding<Bool>? = nil
+    let select: () -> Void
+
+    @State private var isHovered = false
+    @State private var isPressed = false
+    /// Bumped each time the row becomes selected, to play the icon's bounce once.
+    @State private var bounce = 0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private static let pill = RoundedRectangle(cornerRadius: 8, style: .continuous)
+
     var body: some View {
-        RoundedRectangle(cornerRadius: 5.5, style: .continuous)
-            .fill(tint.gradient)
-            .frame(width: 20, height: 20)
-            .overlay {
-                Image(systemName: systemName)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.white)
+        HStack(spacing: 10) {
+            icon
+                .frame(width: 18)
+                .foregroundStyle(.white.opacity(isSelected ? 0.95 : isHovered ? 0.85 : 0.6))
+                // Leans toward the pointer's row a hair, and pops once on selection.
+                .offset(x: isHovered && !isSelected && !reduceMotion ? 1.5 : 0)
+            Text(section.title)
+                .font(.system(size: 13, weight: isSelected ? .medium : .regular))
+                .foregroundStyle(.white.opacity(isSelected ? 0.95 : isHovered ? 0.92 : 0.78))
+                .lineLimit(1)
+            Spacer(minLength: 4)
+            if let count {
+                Text("\(count)")
+                    .font(.system(size: 11, weight: .medium).monospacedDigit())
+                    .foregroundStyle(.white.opacity(isHovered || isSelected ? 0.55 : 0.42))
+                    .contentTransition(.numericText())
             }
+            if let disclosure {
+                DisclosureChevron(isExpanded: disclosure)
+            }
+        }
+        .padding(.leading, indent ? 28 : 10)
+        .padding(.trailing, 8)
+        .padding(.vertical, 6)
+        .background {
+            ZStack {
+                if isHovered && !isSelected {
+                    Self.pill.fill(SettingsPalette.hovered)
+                        .transition(.opacity)
+                }
+                if isSelected {
+                    Self.pill
+                        .fill(SettingsPalette.selected)
+                        .overlay {
+                            // A hairline lit from above, so the pill reads as raised.
+                            Self.pill.strokeBorder(
+                                LinearGradient(colors: [.white.opacity(0.10), .white.opacity(0.02)],
+                                               startPoint: .top, endPoint: .bottom),
+                                lineWidth: 0.5)
+                        }
+                        .matchedGeometryEffect(id: "selection", in: selectionSpace)
+                }
+            }
+        }
+        .contentShape(Self.pill)
+        .scaleEffect(isPressed && !reduceMotion ? 0.97 : 1)
+        .animation(.spring(response: 0.22, dampingFraction: 0.6), value: isPressed)
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.14)) { isHovered = hovering }
+        }
+        // Pressed on touch-down, released on lift: the row answers the finger,
+        // not only the click.
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { _ in if !isPressed { isPressed = true } }
+                .onEnded { value in
+                    isPressed = false
+                    if abs(value.translation.width) < 6, abs(value.translation.height) < 6 { select() }
+                }
+        )
+        .onChange(of: isSelected) { selected in
+            if selected { bounce += 1 }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+        .accessibilityAction { select() }
+    }
+
+    @ViewBuilder
+    private var icon: some View {
+        if let logo = section.logo {
+            ProviderGlyphView(glyph: logo, size: 14)
+                .keyframeAnimator(initialValue: 1.0, trigger: bounce) { content, scale in
+                    content.scaleEffect(scale)
+                } keyframes: { _ in
+                    SpringKeyframe(1.18, duration: 0.14)
+                    SpringKeyframe(1.0, duration: 0.3, spring: .bouncy)
+                }
+        } else {
+            Image(systemName: section.icon)
+                .font(.system(size: indent ? 12 : 13, weight: .regular))
+                .symbolEffect(.bounce, value: bounce)
+        }
+    }
+}
+
+/// The arrow that folds Accounts' providers away: brighter under the pointer,
+/// a soft disc behind it, and a springy turn.
+private struct DisclosureChevron: View {
+    @Binding var isExpanded: Bool
+    @State private var isHovered = false
+
+    var body: some View {
+        Button {
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) { isExpanded.toggle() }
+        } label: {
+            Image(systemName: "chevron.right")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(.white.opacity(isHovered ? 0.85 : 0.45))
+                .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                .frame(width: 18, height: 18)
+                .background(Circle().fill(.white.opacity(isHovered ? 0.08 : 0)))
+                .contentShape(Circle())
+        }
+        .buttonStyle(SettingsPressStyle())
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.12)) { isHovered = hovering }
+        }
+    }
+}
+
+/// A press that dips and springs back, for the sidebar's plain buttons.
+private struct SettingsPressStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.94 : 1)
+            .animation(.spring(response: 0.22, dampingFraction: 0.6), value: configuration.isPressed)
+    }
+}
+
+/// Quit, at the foot of the sidebar: quieter than the sections above it,
+/// with the same hover pill, and a red that only shows once the pointer is on
+/// it — the one row here that does something irreversible.
+private struct SettingsQuitRow: View {
+    let quit: () -> Void
+    @State private var isHovered = false
+
+    private static let hoverRed = Color(red: 1, green: 0.42, blue: 0.4)
+
+    var body: some View {
+        Button(action: quit) {
+            HStack(spacing: 10) {
+                Image(systemName: "power")
+                    .font(.system(size: 12, weight: .regular))
+                    .frame(width: 18)
+                Text(L10n.t("Quit Codenotch"))
+                    .font(.system(size: 13, weight: .regular))
+            }
+            .foregroundStyle(isHovered ? Self.hoverRed : Color.white.opacity(0.55))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(isHovered ? SettingsPalette.hovered : Color.clear)
+            }
+            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        }
+        .buttonStyle(SettingsPressStyle())
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.14)) { isHovered = hovering }
+        }
+    }
+}
+
+/// Switching panes: the old one softens out of focus as the new one sharpens in.
+private struct BlurFade: ViewModifier {
+    let radius: CGFloat
+    let opacity: Double
+
+    func body(content: Content) -> some View {
+        content.blur(radius: radius).opacity(opacity)
+    }
+}
+
+private extension AnyTransition {
+    static var blurFade: AnyTransition {
+        .modifier(active: BlurFade(radius: 10, opacity: 0),
+                  identity: BlurFade(radius: 0, opacity: 1))
     }
 }
 
@@ -153,6 +376,10 @@ struct SettingsView: View {
     @State private var accounts: [ProviderSummary] = []
     @State private var displays: [DisplayOption] = []
     @State private var selection: SettingsSection = .accounts
+    /// Whether Accounts shows its provider panes. Remembered, so someone who
+    /// folds the group away finds it folded next time.
+    @AppStorage("settingsAccountsExpanded") private var accountsExpanded = true
+    @Namespace private var selectionSpace
     /// The provider being dragged right now.
     ///
     /// Held here rather than read off the drop, because the rows have to move
@@ -170,7 +397,6 @@ struct SettingsView: View {
     @State private var authorLinkHovered = false
     /// A gesture for this sitting, not a setting: the sidebar comes back on
     /// the next open, the same way a window's own sidebar toggle behaves.
-    @State private var isSidebarVisible = true
     /// A short-lived acknowledgement for the recenter action. The notch may
     /// already be centred, in which case the action has no visible movement;
     /// the acknowledgement keeps the button from feeling inert.
@@ -199,6 +425,7 @@ struct SettingsView: View {
     var previewSessionLimitAlert: (() -> Void)? = nil
     var previewWeeklyLimitAlert: (() -> Void)? = nil
     @Environment(\.codenotchReduceTransparency) private var reduceTransparency
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         // A plain HStack rather than `NavigationSplitView`: the sidebar here
@@ -209,14 +436,19 @@ struct SettingsView: View {
         // `SettingsWindowController.show()`). A fixed-width list beside the
         // pane gets the same look with no toggle to remove.
         HStack(spacing: 0) {
-            if isSidebarVisible {
-                sidebar
-                    .transition(.move(edge: .leading).combined(with: .opacity))
+            sidebar
+            // Stacked, so the pane leaving and the one arriving cross in the
+            // same place rather than being laid out side by side.
+            ZStack {
+                pane(for: selection)
+                    .id(selection)
+                    .transition(reduceMotion ? .opacity : .blurFade)
+                    // A fixed subject per window, not a document — nothing here
+                    // is titled the way a sidebar of documents would be.
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            pane(for: selection)
-                // A fixed subject per window, not a document — nothing here
-                // is titled the way a sidebar of documents would be.
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .animation(.easeOut(duration: reduceMotion ? 0.12 : 0.24), value: selection)
+            .clipped()
         }
         // Rebuild the whole pane when the language changes.
         //
@@ -244,22 +476,18 @@ struct SettingsView: View {
         // (see `SettingsWindowController.show()`), so this material is the
         // whole visible surface, and clipping it is what rounds all four
         // corners rather than only the two macOS rounds for a titled window.
-        .background {
-            if reduceTransparency {
-                Color(nsColor: .windowBackgroundColor)
-            } else {
-                VisualEffect(material: .underWindowBackground)
-            }
-        }
+        // Solid, not a material: the panel is dark whatever is behind it, the
+        // way a pro app's own window is, so nothing from the desktop washes
+        // through and every surface keeps the value it was designed at.
+        .background(SettingsPalette.window)
         .clipShape(RoundedRectangle(cornerRadius: SettingsView.cornerRadius,
                                     style: .continuous))
         .overlay {
-            if reduceTransparency {
-                RoundedRectangle(cornerRadius: SettingsView.cornerRadius,
-                                 style: .continuous)
-                    .strokeBorder(Color(nsColor: .separatorColor), lineWidth: 1)
-            }
+            RoundedRectangle(cornerRadius: SettingsView.cornerRadius, style: .continuous)
+                .strokeBorder(SettingsPalette.edge, lineWidth: 1)
         }
+        // Always the dark look, controls included, to match the notch it sets up.
+        .environment(\.colorScheme, .dark)
         // Without this SwiftUI insets the content by the title bar's height
         // even though the window has none to speak of, and the panel's own
         // rounded top is pushed down leaving a transparent band with the
@@ -294,169 +522,128 @@ struct SettingsView: View {
             }
     }
 
-    /// The subject list, drawn as a card floating inside the window rather
-    /// than as a full-height column welded to its left edge.
-    ///
-    /// The inset is what makes it read as floating: the window's own
-    /// background runs around all four of its sides, so the card has an edge
-    /// everywhere instead of only on the one side facing the pane. The
-    /// traffic lights land inside it, which is why the rows start a clear
-    /// `trafficLightClearance` below the top rather than at it.
+    /// The subject list: a full-height column on a shade lighter than the
+    /// pane, the app's own mark and name at its head, plain white symbols
+    /// rather than coloured badges, and the selection as a soft grey pill.
     private var sidebar: some View {
-        List(SettingsSection.visible, selection: $selection) { section in
-            Label {
-                Text(section.title)
-            } icon: {
-                SidebarIcon(systemName: section.icon, tint: section.tint)
-            }
-            // System Settings' row rhythm: a 32pt pitch, and the badge close
-            // to the left edge of its selection pill. The list adds an inset
-            // of its own inside the row, so this stays small — 10pt here put
-            // the badge some 20pt into the pill, which read as a column of
-            // icons floating in the middle of the sidebar.
-            .padding(.vertical, 4)
-            .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 10))
-            .tag(section)
-        }
-        .listStyle(.sidebar)
-        .environment(\.defaultMinListRowHeight, 24)
-        // The list paints its own sidebar material, which would sit over the
-        // card's own and square its corners off again.
-        .scrollContentBackground(.hidden)
-        // The band the traffic lights sit in. The toggle takes its right-hand
-        // end, which is the one part of that band nothing else claims.
-        .safeAreaInset(edge: .top, spacing: 0) {
-            HStack(spacing: 0) {
-                Spacer(minLength: 0)
-                sidebarToggle
-            }
-            .padding(.trailing, 14)
-            .frame(height: SettingsView.headerHeight - SettingsView.sidebarInset)
-        }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            Button(role: .destructive, action: quit) {
-                Label {
-                    Text(L10n.t("Quit Codenotch"))
-                } icon: {
-                    SidebarIcon(systemName: "power", tint: .red)
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .padding(.horizontal, 10)
-            .padding(.bottom, 10)
-        }
-        .frame(width: SettingsView.sidebarWidth)
-        // Liquid Glass, the way System Settings draws its own floating
-        // sidebar on this OS — not a flat tint over the window's material.
-        // Under reduce-transparency, swap to an opaque solid card with an explicit border.
-        .background {
-            // Reduce-transparency wins outright: it is a request for no
-            // see-through surface at all, which neither glass nor a material
-            // would honour. Only past that does the OS decide which of the
-            // two translucent treatments it can actually draw.
-            if reduceTransparency {
-                RoundedRectangle(cornerRadius: SettingsView.sidebarCornerRadius,
-                                 style: .continuous)
-                    .fill(Color(nsColor: .controlBackgroundColor))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: SettingsView.sidebarCornerRadius,
-                                         style: .continuous)
-                            .strokeBorder(Color(nsColor: .separatorColor), lineWidth: 1)
-                    )
-            } else if #available(macOS 26.0, *) {
-                Color.clear.glassEffect(
-                    .regular,
-                    in: RoundedRectangle(cornerRadius: SettingsView.sidebarCornerRadius,
-                                         style: .continuous)
-                )
-            } else {
-                RoundedRectangle(cornerRadius: SettingsView.sidebarCornerRadius,
-                                 style: .continuous)
-                    .fill(.regularMaterial)
-            }
-        }
-        .padding(SettingsView.sidebarInset)
-    }
+        VStack(alignment: .leading, spacing: 0) {
+            // The band the traffic lights sit in.
+            Color.clear.frame(height: SettingsView.headerHeight)
 
-    /// Folds the sidebar away, from inside the sidebar itself: a bare symbol,
-    /// because the card it sits on is already a surface of its own.
-    private var sidebarToggle: some View {
-        Button(action: toggleSidebar) {
-            Image(systemName: "sidebar.left")
-                .font(.system(size: 15, weight: .regular))
-                .foregroundStyle(.secondary)
-                .frame(width: 24, height: 24)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help(L10n.t("Hide Sidebar"))
-    }
+            HStack(spacing: 10) {
+                Image(nsImage: NSApp.applicationIconImage)
+                    .resizable()
+                    .interpolation(.high)
+                    .frame(width: 22, height: 22)
+                Text("Codenotch")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(.white)
+            }
+            .padding(.horizontal, 18)
+            .padding(.bottom, 16)
 
-    /// And brings it back, from the pane's own header.
-    ///
-    /// A glass disc rather than a bare symbol: with the card gone there is no
-    /// surface under it any more, and a lone glyph floating on the pane reads
-    /// as decoration rather than as the control that undoes what just
-    /// happened.
-    private var collapsedSidebarToggle: some View {
-        Button(action: toggleSidebar) {
-            Image(systemName: "sidebar.left")
-                .font(.system(size: 15, weight: .regular))
-                .foregroundStyle(.primary)
-                .frame(width: 36, height: 36)
-                .background {
-                    if reduceTransparency {
-                        Circle()
-                            .fill(Color(nsColor: .controlBackgroundColor))
-                            .overlay(Circle().strokeBorder(Color(nsColor: .separatorColor), lineWidth: 1))
-                    } else if #available(macOS 26.0, *) {
-                        Color.clear.glassEffect(.regular, in: Circle())
-                    } else {
-                        Circle().fill(.regularMaterial)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(SettingsSection.topLevel) { section in
+                        SettingsSidebarRow(
+                            section: section,
+                            isSelected: selection == section,
+                            selectionSpace: selectionSpace,
+                            count: section == .accounts ? connectedCount : nil,
+                            disclosure: section == .accounts ? $accountsExpanded : nil,
+                            select: { selectSection(section) }
+                        )
+                        if section == .accounts, accountsExpanded {
+                            ForEach(SettingsSection.providerPanes) { child in
+                                SettingsSidebarRow(section: child,
+                                                   isSelected: selection == child,
+                                                   selectionSpace: selectionSpace,
+                                                   indent: true,
+                                                   select: { selectSection(child) })
+                            }
+                        }
                     }
                 }
-                .contentShape(Circle())
+                .padding(.horizontal, 10)
+            }
+            .scrollIndicators(.never)
+
+            Spacer(minLength: 0)
+
+            VStack(alignment: .leading, spacing: 6) {
+                SettingsQuitRow(quit: quit)
+                HStack(spacing: 8) {
+                    Text("Codenotch \(updater.currentVersion)")
+                        .font(.system(size: 11, weight: .regular))
+                        .foregroundStyle(.white.opacity(0.32))
+                    Spacer(minLength: 0)
+                    // Only once a check has found a newer version. Sparkle
+                    // downloads it in the background either way; this is for
+                    // someone who would rather have it now than on next launch.
+                    if case .found(let newer) = updater.outcome {
+                        Button(L10n.t("Update")) { updater.checkNow() }
+                            .buttonStyle(SettingsButtonStyle(kind: .prominent, compact: true))
+                            .help(L10n.t("Version \(newer) is available"))
+                            .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                    }
+                }
+                .animation(.easeOut(duration: 0.2), value: updater.outcome)
+                .padding(.horizontal, 10)
+            }
+            .padding(.horizontal, 10)
+            .padding(.bottom, 16)
         }
-        .buttonStyle(.plain)
-        .help(L10n.t("Show Sidebar"))
+        // Opening a provider's pane from elsewhere must not land on a row
+        // that is folded out of sight.
+        .onChange(of: selection) { section in
+            if SettingsSection.providerPanes.contains(section) { accountsExpanded = true }
+        }
+        .frame(width: SettingsView.sidebarWidth)
+        .frame(maxHeight: .infinity)
+        .background(SettingsPalette.sidebar)
+        .overlay(alignment: .trailing) {
+            SettingsPalette.hairline.frame(width: 1)
+        }
     }
 
-    private func toggleSidebar() {
-        withAnimation(.snappy(duration: 0.22)) { isSidebarVisible.toggle() }
+    /// The pill slides on a spring; the pane itself crossfades on its own.
+    private func selectSection(_ section: SettingsSection) {
+        guard section != selection else { return }
+        withAnimation(.spring(response: 0.34, dampingFraction: 0.82)) { selection = section }
+        // A pane opens the way the window does: nothing being typed in.
+        if let window = NSApp.keyWindow { SettingsWindowController.startUnfocused(window) }
     }
 
-    /// A title fixed above the scrolling `Form`, the way System Settings
-    /// itself names the pane once at the top rather than repeating it as a
-    /// group header that would scroll away with everything else.
+    /// How many providers are switched on, beside Accounts in the sidebar.
+    private var connectedCount: Int {
+        accounts.filter { $0.localModel == nil && preferences.isConnected($0.id) }.count
+    }
+
+    /// A large title and a line under it, fixed above the scrolling content,
+    /// then a hairline across the whole pane.
     private func pane(for section: SettingsSection) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            // One row across the top of the window, and the title rides it.
-            // With the sidebar folded away the traffic lights are over this
-            // pane instead, so the row starts clear of them and the toggle
-            // takes the place the sidebar's own copy had — all three on the
-            // same line rather than stacked down the corner.
-            HStack(spacing: 16) {
-                if !isSidebarVisible {
-                    Color.clear
-                        .frame(width: SettingsView.trafficLightWidth, height: 1)
-                    collapsedSidebarToggle
-                }
+            VStack(alignment: .leading, spacing: 3) {
                 Text(section.title)
-                    .font(.title2.weight(.semibold))
-                Spacer(minLength: 0)
+                    .font(.system(size: 19, weight: .semibold))
+                    .foregroundStyle(.white)
+                Text(section.subtitle)
+                    .font(.system(size: 12, weight: .regular))
+                    .foregroundStyle(.white.opacity(0.5))
             }
-            .frame(height: SettingsView.headerHeight)
-            .padding(.leading, isSidebarVisible ? 20 : 12)
+            .padding(.horizontal, 24)
+            // The same above as below, so the block sits in the middle of its band.
+            .padding(.vertical, 20)
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            SettingsPalette.hairline.frame(height: 1)
+
             paneContent(for: section)
-                // The pane sits directly on the window's own background, the
-                // way the sidebar card floats on it — a `Form`'s opaque
-                // grouped backing would paint a second, squarer surface over
-                // the top of it.
+                // The pane sits directly on the window's own dark ground; the
+                // form's sections draw as the raised cards.
                 .scrollContentBackground(.hidden)
+                // Every button in the pane answers the pointer the same way.
+                .buttonStyle(SettingsButtonStyle())
         }
     }
 
@@ -729,8 +916,7 @@ struct SettingsView: View {
                             systemImage: didRecentre ? "checkmark" : "arrow.counterclockwise"
                         )
                     }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
+                    .buttonStyle(SettingsButtonStyle(kind: .prominent))
                 }
 
                 // The arc above the notch. Hiding it loses nothing that cannot
@@ -1072,14 +1258,14 @@ struct SettingsView: View {
     /// it, not so much that it reads as a separate panel that came adrift.
     static let sidebarInset: CGFloat = 4
     static let sidebarCornerRadius: CGFloat = 14
-    static let sidebarWidth: CGFloat = 196
+    static let sidebarWidth: CGFloat = 220
 
     /// The sidebar plus a detail pane wide enough for an account row's name,
     /// buttons and switch without crowding.
-    static let width: CGFloat = 680
+    static let width: CGFloat = 860
     /// Each pane scrolls on its own now, so this no longer has to fit every
     /// section in the app at once — just a comfortable account list.
-    static let height: CGFloat = 520
+    static let height: CGFloat = 600
 
     /// The rows the notch actually draws, in the order it draws them.
     ///
@@ -1250,6 +1436,7 @@ private struct AccentColorSwatch: View {
     let select: () -> Void
 
     @Environment(\.codenotchReduceTransparency) private var reduceTransparency
+    @State private var isHovered = false
 
     var body: some View {
         Button(action: select) {
@@ -1257,6 +1444,9 @@ private struct AccentColorSwatch: View {
                 Circle()
                     .fill(choice.color)
                     .frame(width: 16, height: 16)
+                    // Grows a little under the pointer, so the one about to be
+                    // chosen is clear before the click.
+                    .scaleEffect(isHovered && !isSelected ? 1.15 : 1)
                     .overlay {
                         Circle().strokeBorder(.primary.opacity(reduceTransparency ? 0.35 : 0.18), lineWidth: 1)
                     }
@@ -1274,6 +1464,9 @@ private struct AccentColorSwatch: View {
             .contentShape(Circle())
         }
         .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.12)) { isHovered = hovering }
+        }
         .help(choice.title)
         .accessibilityLabel(choice.title)
         .accessibilityValue(isSelected ? L10n.t("Selected") : L10n.t("Not selected"))
@@ -1309,7 +1502,7 @@ private struct SoundRow: View {
             } label: {
                 Image(systemName: "play.circle")
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(SettingsIconButtonStyle())
             .help(L10n.t("Play \(name)"))
         }
     }
@@ -1431,7 +1624,7 @@ private struct AccountRow: View {
                             .font(.system(size: 11))
                             .foregroundStyle(isMuted ? .tertiary : .secondary)
                     }
-                    .buttonStyle(.borderless)
+                    .buttonStyle(SettingsIconButtonStyle())
                     .help(isMuted
                           ? L10n.t("Alerts for \(provider.name) are muted. Click to unmute.")
                           : L10n.t("Alert when \(provider.name) crosses 80% and 100% of a limit."))
@@ -1774,7 +1967,7 @@ private struct AccountRow: View {
                         .textSelection(.enabled)
                     if canOpenSignIn {
                         Button(L10n.t("Switch…")) { _ = switchAccount(provider.id) }
-                            .buttonStyle(.link)
+                            .buttonStyle(SettingsLinkButtonStyle())
                             .help(provider.signIn.switchHint)
                     }
                 }
@@ -1914,15 +2107,17 @@ struct PhoneSettingsPane: View {
     private func lastSeenText(for device: PairedDevice) -> String {
         let diff = Date().timeIntervalSince(device.lastSeenAt)
         if diff < 60 {
-            return "Active now"
+            return L10n.t("Active now")
         }
         if device.lastSeenAt == device.pairedAt {
             let df = DateFormatter()
+            df.locale = L10n.locale
             df.dateStyle = .medium
             df.timeStyle = .none
-            return "Paired \(df.string(from: device.pairedAt))"
+            return L10n.t("Paired \(df.string(from: device.pairedAt))")
         }
         let rf = RelativeDateTimeFormatter()
+        rf.locale = L10n.locale
         rf.unitsStyle = .full
         return "Last seen \(rf.localizedString(for: device.lastSeenAt, relativeTo: Date()))"
     }
@@ -1967,7 +2162,7 @@ struct PhoneSettingsPane: View {
                     }
                     PhoneLinkWindowController.shared.show(pairing: pairing, registry: registry, port: preferences.phoneLinkPort, serverStatus: serverStatus)
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(SettingsButtonStyle(kind: .prominent))
                 .controlSize(.large)
             }
             

@@ -93,6 +93,7 @@ wire-level details.
 | **Antigravity** | official where licensed, otherwise a request count | Antigravity's local language server first, then Google's quota endpoint; a plain count when neither will answer for the account. |
 | **GLM** | official | Z.ai's Coding Plan monitor endpoint, with a key borrowed from whichever coding tool already holds one — Claude Code's `settings.json`, ZCode, or OpenCode. |
 | **MiniMax** | official where a Coding Plan key is used, derived from official Platform responses for the in-app sign-in | A Coding Plan key pasted in Settings, or explicit sign-in in Codenotch's own WKWebView. |
+| **QianwenAI** | derived from official console responses | Explicit sign-in in Codenotch's own WKWebView, then the console's own Token Plan gateway. Shows the personal plan's 7-day credits window. |
 | **Ollama (Local)** | local runtime | Automatically detected local models, RAM/VRAM, unload time and context. Optional response capture adds thinking and generation speed. |
 | **LM Studio** | local runtime | Loaded models from LM Studio's own listing, what each one is doing (prompt, generating, queue) from its SDK socket, and speed, context use and tokens per day from its server log. No relay needed. |
 | **Grok** | official | The Grok CLI session in `~/.grok/auth.json`, against the same credits billing endpoint `/usage` uses. |
@@ -106,8 +107,9 @@ Most providers borrow a credential or session from a tool already on your Mac.
 DeepSeek is the explicit browser-login exception: it never reads a browser's
 cookies or credentials, and only makes requests after you choose **Sign in to
 DeepSeek** from Codenotch. MiniMax is the same kind of exception — a key you
-paste in Settings, or an explicit WKWebView sign-in. It never opens a browser's
-cookie store.
+paste in Settings, or an explicit WKWebView sign-in. QianwenAI is a third: it
+publishes no usage API and has no key to paste, so that WKWebView session is the
+only way in. None of them opens a browser's cookie store.
 
 Ollama Cloud accepts an API key in Settings. Switching a provider off stops its
 usage polling and forgets its readings; borrowed accounts stay signed in to

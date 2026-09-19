@@ -10,11 +10,15 @@ const LABEL: &str = "settings";
 /// Mica arrived with Windows 11's first build.
 const FIRST_MICA_BUILD: u32 = 22000;
 
-/// Queued on the main thread for every caller: a window built inside a synchronous command
-/// deadlocks on Windows, and `open_settings` is one.
+/// Always built on a later turn of the event loop. A window built inside a synchronous command
+/// deadlocks WebView2 and comes up blank, and asking `run_on_main_thread` from the main thread —
+/// where those commands run — builds it on the spot, so the request is posted from another thread.
 pub fn open(app: &AppHandle) {
     let handle = app.clone();
-    let _ = app.run_on_main_thread(move || open_now(&handle));
+    std::thread::spawn(move || {
+        let app = handle.clone();
+        let _ = handle.run_on_main_thread(move || open_now(&app));
+    });
 }
 
 fn open_now(app: &AppHandle) {
@@ -38,8 +42,12 @@ fn open_now(app: &AppHandle) {
     if has_mica() {
         builder = builder.transparent(true).effects(EffectsBuilder::new().effect(Effect::Mica).build());
     }
-    if let Err(e) = builder.build() {
-        crate::applog(&format!("settings window: {e}"));
+    match builder.build() {
+        // Raised again once it exists: a window created while the app is not in front can come up behind
+        Ok(w) => {
+            let _ = w.set_focus();
+        }
+        Err(e) => crate::applog(&format!("settings window: {e}")),
     }
 }
 

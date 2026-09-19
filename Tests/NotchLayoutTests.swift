@@ -101,6 +101,26 @@ final class NotchLayoutTests: XCTestCase {
         XCTAssertLessThan(NotchLayout.weeklyRingStroke, NotchLayout.progressStroke)
     }
 
+    /// A tiny real fraction still has to draw as an arc, not collapse into a
+    /// dot that reads as a status light. `nil` (no reading) keeps the full ring.
+    func testASmallContextStillReadsAsAnArc() {
+        XCTAssertEqual(ProviderRing.localSweep(for: 0.01), NotchLayout.localArcMinimumSweep, accuracy: 0.0001)
+        XCTAssertEqual(ProviderRing.localSweep(for: 0), NotchLayout.localArcMinimumSweep, accuracy: 0.0001)
+        XCTAssertEqual(ProviderRing.localSweep(for: 0.5), 0.5, accuracy: 0.0001)
+        XCTAssertEqual(ProviderRing.localSweep(for: 1.7), 1, accuracy: 0.0001)
+        XCTAssertEqual(ProviderRing.localSweep(for: nil), 1, accuracy: 0.0001, "no reading still draws the whole ring")
+    }
+
+    /// The floor has to actually clear the two round caps drawn at the ends of
+    /// the arc, or the "minimum arc" is still just a dot; and it has to stay
+    /// small enough that it never reads as a genuine reading.
+    func testTheMinimumArcIsLongerThanItsCaps() {
+        let arcBody = NotchLayout.localArcMinimumSweep * .pi
+            * (NotchLayout.ringDiameter - NotchLayout.progressStroke)
+        XCTAssertGreaterThan(arcBody, 2 * NotchLayout.progressStroke)
+        XCTAssertLessThan(NotchLayout.localArcMinimumSweep, 0.1)
+    }
+
     /// Every cell's tooltip has to fit inside the panel, or the card would be
     /// clipped for the first and last providers.
     func testTooltipFitsThePanelForEveryCell() {

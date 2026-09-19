@@ -52,6 +52,13 @@ enum NotchLayout {
     static let ringDiameter  = Design.px(117)   // 44pt, the design spec's anchor
     static let trackStroke   = Design.px(15.5)
     static let progressStroke = Design.px(8)
+    /// A fraction of the circle, not a pixel length. Below it the arc's two
+    /// round caps (each `progressStroke / 2`) overlap and the context reading
+    /// collapses into a dot that looks like a status light. At 0.06 the arc
+    /// path (radius `(ringDiameter - progressStroke) / 2`) draws roughly 20px
+    /// of body plus caps — clearly an arc. It only floors a known reading;
+    /// `nil` still draws the full ring.
+    static let localArcMinimumSweep: CGFloat = 0.06
     static let glyphSize     = Design.px(46)
     static let ringLabelGap  = Design.px(26.9)
 

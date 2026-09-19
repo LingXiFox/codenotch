@@ -186,6 +186,17 @@ final class RateLimitTests: XCTestCase {
             .error("HTTP 500")
         )
     }
+
+    /// A business failure the server named is shown by that name. The status is
+    /// 200 either way, so a status is the one thing it cannot be shown by —
+    /// which is how every one of them used to read "HTTP 0".
+    @MainActor
+    func testANamedBusinessFailureReadsAsItsOwnName() {
+        XCTAssertEqual(
+            UsageStore.statusForTesting(UsageProviderError.apiError("Bad Request")),
+            .error("Bad Request")
+        )
+    }
 }
 
 /// A cold start that cannot reach the endpoint must still show what it knew

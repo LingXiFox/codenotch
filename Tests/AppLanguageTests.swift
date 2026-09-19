@@ -113,4 +113,23 @@ final class AppLanguageTests: XCTestCase {
         L10n.testLocale = nil
         XCTAssertEqual(L10n.locale.identifier, "uk")
     }
+
+    func testTraditionalChineseIsOfferedAndMapsToZhHant() {
+        XCTAssertTrue(AppLanguage.allCases.contains(.traditionalChinese))
+        XCTAssertEqual(AppLanguage.traditionalChinese.title, "繁體中文")
+        XCTAssertEqual(AppLanguage.traditionalChinese.locale?.identifier, "zh-Hant")
+    }
+
+    func testApplyTraditionalChineseStoresTheOverride() {
+        L10n.apply(.traditionalChinese)
+        L10n.testLocale = nil
+        XCTAssertEqual(L10n.locale.identifier, "zh-Hant")
+    }
+
+    func testApplyTraditionalChineseServesTraditionalCopy() {
+        L10n.apply(.traditionalChinese)
+        L10n.testLocale = nil
+        XCTAssertEqual(L10n.t("Always show"), "始終顯示")
+        XCTAssertEqual(L10n.t("Settings…"), "設定…")
+    }
 }
