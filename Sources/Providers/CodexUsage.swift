@@ -142,8 +142,8 @@ enum CodexUsage {
             // A bad main object must not discard Spark/code review, and a bad
             // extra must not discard a good main pair. `try` here used to
             // turn a single unreadable window into a failed fetch.
-            rate_limit = decodeFirstRateLimit(in: container, keys: [.rate_limit, .rate_limits])
-            plan_type = decodeFirstString(in: container, keys: [.plan_type, .planType])
+            rate_limit = Self.decodeFirstRateLimit(in: container, keys: [.rate_limit, .rate_limits])
+            plan_type = Self.decodeFirstString(in: container, keys: [.plan_type, .planType])
             let extras = (try? container.decodeIfPresent(
                 [FailableAdditionalRateLimit].self, forKey: .additional_rate_limits
             )) ?? []
@@ -153,7 +153,7 @@ enum CodexUsage {
             )
         }
 
-        private func decodeFirstRateLimit(
+        private static func decodeFirstRateLimit(
             in container: KeyedDecodingContainer<CodingKeys>,
             keys: [CodingKeys]
         ) -> RateLimit? {
@@ -165,7 +165,7 @@ enum CodexUsage {
             return nil
         }
 
-        private func decodeFirstString(
+        private static func decodeFirstString(
             in container: KeyedDecodingContainer<CodingKeys>,
             keys: [CodingKeys]
         ) -> String? {
