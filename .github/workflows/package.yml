@@ -73,7 +73,7 @@ jobs:
           {
             echo "### Codenotch ${{ steps.version.outputs.value }} — unsigned build"
             echo
-            echo "Download the artifact below, unzip it, and open the `.dmg`."
+            echo "Download the artifact below, unzip it, and open the \`.dmg\`."
             echo
             echo "This build is ad-hoc signed rather than notarized, so macOS quarantines it."
             echo "After dragging the app to /Applications, clear the quarantine flag once:"
@@ -112,9 +112,9 @@ jobs:
           DMG=$(ls build/ci/*.dmg)
 
           cat > notes.md <<EOF
-          Built from `main` at ${GITHUB_SHA}.
+          Built from \`main\` at ${GITHUB_SHA}.
 
-          A build of unreleased `main`, so the app can be tried without
+          A build of unreleased \`main\`, so the app can be tried without
           installing Xcode and compiling it. It is ad-hoc signed rather than
           notarized, so macOS quarantines the download. After dragging it to
           Applications, clear the flag once:
