@@ -127,22 +127,13 @@ jobs:
               'if isConnected, provider.id == "gemini" {',
               'if isConnected, provider.id == "gemini" || AGMProfile.isAGM(providerID: provider.id) {'
           )
-
-          for path in [".github/workflows/ci.yml", ".github/workflows/package.yml"]:
-              p = Path(path)
-              s = p.read_text()
-              old = "if: github.repository == 'vinzdg/codenotch'"
-              new = "if: github.repository == 'vinzdg/codenotch' || github.repository == 'LingXiFox/codenotch'"
-              if old not in s:
-                  raise SystemExit(f"workflow guard not found in {path}")
-              p.write_text(s.replace(old, new, 1))
           PY
 
       - name: Commit integration patch
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add Sources .github/workflows/ci.yml .github/workflows/package.yml
+          git add Sources
           git commit -m "Wire AGM multi-account runtime [agm-bootstrap]"
           git push origin HEAD:feature/antigravity-multi-account
 
