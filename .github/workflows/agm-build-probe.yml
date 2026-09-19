@@ -1,0 +1,31 @@
+name: AGM build probe
+
+on:
+  push:
+    branches:
+      - ci/agm-build-probe
+
+jobs:
+  compile-app:
+    runs-on: macos-26
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Compile release app
+        run: make build-ci
+
+      - name: Package app bundle
+        run: |
+          APP=$(find build/ci -type d -name 'Codenotch.app' -print -quit)
+          test -n "$APP"
+          ditto -c -k --sequesterRsrc --keepParent "$APP" build/ci/Codenotch.app.zip
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: Codenotch-AGM-build-probe-${{ github.sha }}
+          path: build/ci/Codenotch.app.zip
+          if-no-files-found: error
