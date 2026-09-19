@@ -825,6 +825,9 @@ final class Preferences: ObservableObject {
         if defaults.object(forKey: Keys.connected) != nil {
             connectedProviders.subtract(connectedProviders.filter(Self.isModelCell))
             seenProviders.subtract(seenProviders.filter(Self.isModelCell))
+            if connectedProviders.contains("gemini") {
+                connectedProviders.formUnion(discovered.filter(AGMProfile.isAGM(providerID:)))
+            }
             let novel = discovered.subtracting(seenProviders)
             for id in novel where Self.isDefaultOnFamily(id) {
                 connectedProviders.insert(id)

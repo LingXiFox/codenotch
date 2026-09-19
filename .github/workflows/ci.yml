@@ -7,7 +7,7 @@ on:
 
 jobs:
   test:
-    if: github.repository == 'vinzdg/codenotch'
+    if: github.repository == 'vinzdg/codenotch' || github.repository == 'LingXiFox/codenotch'
     name: Unit tests
     # macOS 26, because that is what the app targets. An older image ships an
     # Xcode that cannot read the project at all — `objectVersion 77` is a
