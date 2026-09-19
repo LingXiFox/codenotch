@@ -22,7 +22,7 @@ enum AGMBridge {
         let provider: String
         let model: String
         let remainingPercent: Int
-        let resetTime: String
+        let resetTime: String?
     }
 
     static func findExecutable(fileManager: FileManager = .default) -> URL? {
@@ -54,7 +54,7 @@ enum AGMBridge {
                             arguments: ["-lic", "command -v agm 2>/dev/null"],
                             timeout: 2)
         let path = probe.stdout
-            .split(whereSeparator: \.isNewline)
+            .split(whereSeparator: .isNewline)
             .map(String.init)
             .last?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -105,21 +105,21 @@ enum AGMBridge {
 
     static func parseProfiles(list: String, aliases: String) -> [AGMProfile] {
         var aliasForEmail: [String: String] = [:]
-        for raw in aliases.split(whereSeparator: \.isNewline) {
-            let fields = raw.split(whereSeparator: \.isWhitespace).map(String.init)
+        for raw in aliases.split(whereSeparator: .isNewline) {
+            let fields = raw.split(whereSeparator: .isWhitespace).map(String.init)
             guard fields.count >= 2, fields[0] != "ALIAS", fields[1].contains("@") else { continue }
             aliasForEmail[fields[1].lowercased()] = fields[0]
         }
 
         var profiles: [AGMProfile] = []
-        for raw in list.split(whereSeparator: \.isNewline) {
+        for raw in list.split(whereSeparator: .isNewline) {
             let line = String(raw)
-            let fields = line.split(whereSeparator: \.isWhitespace).map(String.init)
+            let fields = line.split(whereSeparator: .isWhitespace).map(String.init)
             guard let email = fields.first, email.contains("@"),
                   let emailRange = line.range(of: email) else { continue }
 
             let tail = String(line[emailRange.upperBound...])
-            let status = tail.split(whereSeparator: \.isWhitespace)
+            let status = tail.split(whereSeparator: .isWhitespace)
                 .map(String.init)
                 .prefix { value in
                     value != "-" && !value.hasSuffix("%")
@@ -145,27 +145,25 @@ enum AGMBridge {
     }
 
     static func parseQuotaInfo(_ output: String) -> [QuotaRow] {
-        let pattern = #"^\s*(GOOGLE|ANTHROPIC|OTHER)\s+(.+?)\s+(\d{1,3})%\s+(\S.*?)\s*$"#
-        guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
-
         var rows: [QuotaRow] = []
-        for raw in output.split(whereSeparator: \.isNewline) {
-            let line = String(raw)
-            let range = NSRange(line.startIndex..<line.endIndex, in: line)
-            guard let match = regex.firstMatch(in: line, range: range),
-                  match.numberOfRanges == 5,
-                  let providerRange = Range(match.range(at: 1), in: line),
-                  let modelRange = Range(match.range(at: 2), in: line),
-                  let scoreRange = Range(match.range(at: 3), in: line),
-                  let resetRange = Range(match.range(at: 4), in: line),
-                  let score = Int(line[scoreRange])
+        for raw in output.split(whereSeparator: .isNewline) {
+            let fields = raw.split(whereSeparator: .isWhitespace).map(String.init)
+            guard fields.count >= 3,
+                  ["GOOGLE", "ANTHROPIC", "OTHER"].contains(fields[0]),
+                  let scoreIndex = fields.firstIndex(where: { $0.hasSuffix("%") }),
+                  scoreIndex >= 2,
+                  let score = Int(fields[scoreIndex].dropLast())
             else { continue }
 
+            let model = fields[1..<scoreIndex].joined(separator: " ")
+            let reset = scoreIndex + 1 < fields.count
+                ? fields[(scoreIndex + 1)...].joined(separator: " ")
+                : nil
             rows.append(QuotaRow(
-                provider: String(line[providerRange]),
-                model: String(line[modelRange]).trimmingCharacters(in: .whitespaces),
+                provider: fields[0],
+                model: model,
                 remainingPercent: min(max(score, 0), 100),
-                resetTime: String(line[resetRange]).trimmingCharacters(in: .whitespaces)
+                resetTime: reset
             ))
         }
         return rows
@@ -175,8 +173,20 @@ enum AGMBridge {
         await run(executable: executable, arguments: ["info", profile.email], timeout: 5)
     }
 
+    /// AGM owns one encrypted account database. Serialise refresh commands so
+    /// four visible Antigravity rings cannot make four writers hit it at once.
+    private static let refreshQueue = DispatchQueue(label: "dev.codenotch.agm-refresh")
+
     static func refresh(executable: URL, profile: AGMProfile) async -> CommandResult {
-        await run(executable: executable, arguments: ["refresh", profile.email], timeout: 30)
+        await withCheckedContinuation { continuation in
+            refreshQueue.async {
+                continuation.resume(returning: runSync(
+                    executable: executable,
+                    arguments: ["refresh", profile.email],
+                    timeout: 30
+                ))
+            }
+        }
     }
 }
 
@@ -276,9 +286,9 @@ actor AGMAntigravityProvider: UsageProvider {
 
     nonisolated static func windows(from rows: [AGMBridge.QuotaRow], now: Date) -> [LimitWindow] {
         rows.map { row in
-            let reset = AntigravityCredentials.parse(row.resetTime)
-            let interval = reset?.timeIntervalSince(now) ?? 0
-            let weekly = interval > 24 * 3600
+            let reset = row.resetTime.flatMap(AntigravityCredentials.parse)
+            let interval = reset?.timeIntervalSince(now)
+            let weekly = interval.map { $0 > 24 * 3600 } ?? false
             let group = row.provider == "GOOGLE"
                 ? L10n.t("Gemini Models")
                 : L10n.t("Claude and GPT models")
@@ -290,7 +300,7 @@ actor AGMAntigravityProvider: UsageProvider {
                 label: row.model,
                 usedFraction: 1 - Double(row.remainingPercent) / 100,
                 resetsAt: reset,
-                duration: weekly ? 7 * 86400 : 5 * 3600
+                duration: reset == nil ? nil : (weekly ? 7 * 86400 : 5 * 3600)
             )
         }
         .sorted {

@@ -66,4 +66,39 @@ final class AGMBridgeTests: XCTestCase {
         XCTAssertEqual(windows[0].usedFraction ?? -1, 0.26, accuracy: 0.0001)
         XCTAssertEqual(windows[0].duration, 5 * 3600)
     }
+
+    func testQuotaInfoKeepsRowsWithoutResetTime() {
+        let info = """
+        PROVIDER     MODEL                                             SCORE  RESET
+        ------------------------------------------------------------------------------------------
+        GOOGLE       gemini-3.5-pro                                     82%
+        ANTHROPIC    claude-sonnet                                      47%  2026-09-25T12:00:00+08:00
+        """
+
+        let rows = AGMBridge.parseQuotaInfo(info)
+
+        XCTAssertEqual(rows.count, 2)
+        XCTAssertEqual(rows[0].remainingPercent, 82)
+        XCTAssertNil(rows[0].resetTime)
+        XCTAssertEqual(rows[1].resetTime, "2026-09-25T12:00:00+08:00")
+    }
+
+    func testQuotaWindowWithoutResetDoesNotInventCadence() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let rows = [
+            AGMBridge.QuotaRow(
+                provider: "GOOGLE",
+                model: "gemini-3.5-pro",
+                remainingPercent: 82,
+                resetTime: nil
+            )
+        ]
+
+        let windows = AGMAntigravityProvider.windows(from: rows, now: now)
+
+        XCTAssertEqual(windows.count, 1)
+        XCTAssertEqual(windows[0].usedFraction ?? -1, 0.18, accuracy: 0.0001)
+        XCTAssertNil(windows[0].resetsAt)
+        XCTAssertNil(windows[0].duration)
+    }
 }
