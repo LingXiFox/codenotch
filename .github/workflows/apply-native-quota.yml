@@ -2,8 +2,11 @@ name: Apply Native Quota Patch
 on:
   push:
     branches: [feature/antigravity-multi-account]
+
 permissions:
   contents: write
+  pull-requests: write
+
 jobs:
   apply:
     if: ${{ !contains(github.event.head_commit.message, '[native-source-applied]') }}
@@ -12,11 +15,34 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+
+      - name: Decode patch
+        run: |
+          python3 - <<'PY'
+          import base64, gzip
+          from pathlib import Path
+          src = Path(".github/native-quota.patch.gz.b64").read_text().strip()
+          Path("/tmp/native-quota.patch").write_bytes(gzip.decompress(base64.b64decode(src)))
+          PY
+          wc -c /tmp/native-quota.patch
+
       - name: Apply native quota integration
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          base64 --decode .github/native-quota.patch.gz.b64 | gunzip > /tmp/native-quota.patch
-          git apply --check /tmp/native-quota.patch
+          if ! git apply --check /tmp/native-quota.patch 2>/tmp/apply-error.txt; then
+            {
+              echo "### Native quota patch failed to apply"
+              echo
+              echo '~~~text'
+              cat /tmp/apply-error.txt
+              echo '~~~'
+            } > /tmp/apply-comment.md
+            gh pr comment 2 --body-file /tmp/apply-comment.md || true
+            cat /tmp/apply-error.txt
+            exit 1
+          fi
           git apply /tmp/native-quota.patch
           git rm .github/native-quota.patch.gz.b64 .github/workflows/apply-native-quota.yml
           git config user.name "github-actions[bot]"
